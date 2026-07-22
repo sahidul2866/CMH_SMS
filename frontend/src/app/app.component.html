@@ -1,0 +1,94 @@
+<div class="app-shell" [class.display-shell]="view === 'display'">
+  <aside class="sidebar" *ngIf="view !== 'display'">
+    <div class="brand">
+      <div class="brand-mark">CMH</div>
+      <div><strong>CMH Smart Serial</strong><span>Armed Forces Medical Services</span></div>
+    </div>
+    <nav aria-label="Primary navigation">
+      <button type="button" [class.active]="view === 'reception'" (click)="setView('reception')"><i>01</i><span>Reception Desk<small>Generate & manage tokens</small></span></button>
+      <button type="button" [class.active]="view === 'doctor'" (click)="setView('doctor')"><i>02</i><span>Doctor Console<small>Call the live queue</small></span></button>
+      <button type="button" (click)="setView('display')"><i>03</i><span>Waiting Display<small>TV & audio mode</small></span></button>
+      <button type="button" [class.active]="view === 'reports'" (click)="setView('reports')"><i>04</i><span>Reports & Audit<small>Operational oversight</small></span></button>
+      <button type="button" [class.active]="view === 'settings'" (click)="setView('settings')"><i>05</i><span>Settings<small>Queue, display & audio</small></span></button>
+    </nav>
+    <div class="system-status"><span></span><div><strong>System online</strong><small>Live sync every 5 seconds</small></div></div>
+  </aside>
+
+  <main *ngIf="view !== 'display'">
+    <header class="topbar">
+      <div><span class="eyebrow">Combined Military Hospital · Dhaka Cantonment</span><h1>{{ view === 'reception' ? 'Reception Desk' : view === 'doctor' ? 'Doctor Console' : view === 'reports' ? 'Reports & Audit' : 'System Settings' }}</h1></div>
+      <div class="user"><div>SA</div><span><strong>Serial Administrator</strong><small>CMH Dhaka</small></span></div>
+    </header>
+
+    <section class="workspace" *ngIf="view === 'reception'">
+      <div class="intro"><div><span class="eyebrow">Patient arrival</span><h2>Generate a new serial</h2><p>The patient joins the selected doctor's live queue immediately.</p></div><div class="live-pill"><span></span> Live queue</div></div>
+      <div class="reception-grid">
+        <form class="panel token-form" (ngSubmit)="createToken()">
+          <div class="panel-title"><span>01</span><div><h3>Patient & service identity</h3><p>Register entitled personnel with minimum queue information.</p></div></div>
+          <label>Patient name<input name="patientName" [(ngModel)]="form.patient_name" placeholder="e.g. Md. Rahim Uddin" autocomplete="name"></label>
+          <label>Mobile number<input name="patientPhone" [(ngModel)]="form.patient_phone" placeholder="01XXXXXXXXX" autocomplete="tel"></label>
+          <div class="two-columns">
+            <label>Service category<select name="serviceCategory" [(ngModel)]="form.service_category"><option value="army">Bangladesh Army</option><option value="navy">Bangladesh Navy</option><option value="air_force">Bangladesh Air Force</option><option value="retired">Retired service</option><option value="dependant">Service dependant</option><option value="civilian">Civilian</option></select></label>
+            <label>Rank / relationship<input name="rank" [(ngModel)]="form.rank" placeholder="e.g. Major or Spouse"></label>
+          </div>
+          <label *ngIf="form.service_category !== 'civilian' && form.service_category !== 'dependant'">Service number<input name="serviceNumber" [(ngModel)]="form.service_number" placeholder="Official service number"></label>
+          <div class="two-columns">
+            <label>Visit source<select name="source" [(ngModel)]="form.source"><option value="walk_in">Walk-in</option><option value="appointment">Appointment</option></select></label>
+            <label>Priority<select name="priority" [(ngModel)]="form.priority"><option value="normal">Normal</option><option value="priority">Priority assistance</option></select></label>
+          </div>
+          <label>Consulting doctor<select name="doctor" [(ngModel)]="selectedDoctorId" (ngModelChange)="doctorChanged()"><option *ngFor="let doctor of doctors" [value]="doctor.id">{{ doctor.name }} — {{ doctor.department }}</option></select></label>
+          <label>Shared waiting room<select name="waitingRoom" [(ngModel)]="selectedWaitingRoom"><option *ngFor="let room of waitingRooms" [value]="room.code">{{ room.code }} — {{ room.name }} · {{ room.floor }}</option></select><small class="field-help">Patients of different doctors may share this physical waiting zone.</small></label>
+          <div class="doctor-summary"><div class="avatar">{{ selectedDoctor.name.charAt(4) }}</div><div><strong>{{ selectedDoctor.name }}</strong><span>{{ selectedDoctor.department }}</span></div><dl><div><dt>Consultation</dt><dd>{{ selectedDoctor.room }}</dd></div><div><dt>Patient waits</dt><dd>{{ selectedWaitingRoom }}</dd></div></dl></div>
+          <button class="primary" type="submit" [disabled]="busy">{{ busy ? 'Generating…' : 'Generate token' }} <span>→</span></button>
+          <p class="message" *ngIf="message">{{ message }}</p>
+        </form>
+
+        <section class="panel queue-preview">
+          <div class="panel-heading"><div><span class="eyebrow">Live now</span><h3>{{ selectedDoctor.name }}'s queue</h3></div><button type="button" class="icon-button" (click)="refresh()" aria-label="Refresh queue">↻</button></div>
+          <div class="metric-row"><article><span>Waiting</span><strong>{{ waiting.length }}</strong></article><article><span>Now calling</span><strong>{{ current?.token_number || '—' }}</strong></article><article><span>Room</span><strong>{{ selectedDoctor.room }}</strong></article></div>
+          <div class="mini-list"><article *ngFor="let token of waiting.slice(0, 6)"><b>{{ token.token_number }}</b><div><strong>{{ token.patient_name }}</strong><span>{{ serviceLabel(token.service_category) }}{{ token.rank ? ' · ' + token.rank : '' }} · {{ token.waiting_minutes }} min</span></div><em [class.priority]="token.priority === 'priority'">{{ token.priority }}</em></article><p class="empty" *ngIf="!waiting.length">The queue is ready for the first patient.</p></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="workspace" *ngIf="view === 'doctor'">
+      <div class="intro doctor-intro"><div><span class="eyebrow">Consultation queue</span><h2>Good morning, {{ selectedDoctor.name }}</h2><p>Call the next patient or select anyone from today's waiting list.</p></div><label class="doctor-select">Doctor<select [(ngModel)]="selectedDoctorId" (ngModelChange)="doctorChanged()"><option *ngFor="let doctor of doctors" [value]="doctor.id">{{ doctor.name }}</option></select></label></div>
+      <div class="doctor-grid">
+        <section class="calling-card">
+          <div class="room-label"><span>Consultation room</span><strong>{{ selectedDoctor.room }}</strong></div>
+          <span class="eyebrow light">Now serving</span>
+          <ng-container *ngIf="current; else noCurrent"><div class="current-token">{{ current.token_number }}</div><h3>{{ current.patient_name }}</h3><p>{{ current.status.replace('_',' ') }} · Waiting {{ current.waiting_minutes }} minutes</p><button type="button" class="announce-again" *ngIf="canAction(current,'recall')" (click)="queueAction(current,'recall')" aria-label="Announce this patient again"><span aria-hidden="true">🔊</span><b>Announce again</b><small>{{ current.recall_count || 0 }} recalls</small></button><div class="current-actions"><button type="button" class="complete" *ngIf="canAction(current,'start')" (click)="queueAction(current,'start')">Start service</button><button type="button" class="complete" *ngIf="canAction(current,'complete')" (click)="complete(current)">Complete</button><button type="button" class="complete" *ngIf="canAction(current,'skip')" (click)="queueAction(current,'skip')">Skip</button><button type="button" class="complete" *ngIf="canAction(current,'no_show')" (click)="queueAction(current,'no_show')">No show</button></div></ng-container>
+          <ng-template #noCurrent><div class="current-token muted">—</div><h3>No patient called</h3><p>Your waiting list is ready.</p></ng-template>
+          <button type="button" class="call-next" (click)="callNext()" [disabled]="busy || !waiting.length"><span>Call next patient</span><b>→</b></button>
+          <small>Updates TV displays and triggers the room announcement.</small>
+        </section>
+        <section class="panel waiting-list">
+          <div class="panel-heading"><div><span class="eyebrow">Live queue</span><h3>Waiting patients <b>{{ waiting.length }}</b></h3></div><div class="live-pill"><span></span> Live</div></div>
+          <div class="patient-row expanded" *ngFor="let token of activeQueue; let index = index"><div class="position">{{ index + 1 }}</div><div class="token-badge">{{ token.token_number }}</div><div class="patient"><strong>{{ token.rank ? token.rank + ' ' : '' }}{{ token.patient_name }}</strong><span>{{ serviceLabel(token.service_category) }} · {{ token.status.replace('_',' ') }} · {{ token.waiting_minutes }}m</span></div><span class="priority-label" [class.normal]="token.priority !== 'priority'" (click)="togglePriority(token)">{{ token.priority }}</span><div class="row-actions"><button type="button" *ngIf="token.status === 'waiting'" (click)="call(token)">Call</button><button type="button" *ngIf="canAction(token,'recall')" (click)="queueAction(token,'recall')">Recall</button><button type="button" *ngIf="canAction(token,'start')" (click)="queueAction(token,'start')">Start</button><button type="button" *ngIf="canAction(token,'skip')" (click)="queueAction(token,'skip')">Skip</button><button type="button" *ngIf="canAction(token,'no_show')" (click)="queueAction(token,'no_show')">No show</button></div></div>
+          <p class="empty" *ngIf="!waiting.length">No patients are waiting for this doctor.</p>
+          <p class="message" *ngIf="message">{{ message }}</p>
+        </section>
+      </div>
+    </section>
+
+    <section class="workspace" *ngIf="view === 'reports'">
+      <div class="intro"><div><span class="eyebrow">Command overview</span><h2>Today’s queue performance</h2><p>Operational totals and traceable staff actions from the standalone queue system.</p></div><button class="refresh-report" type="button" (click)="setView('reports')">Refresh report</button></div>
+      <section class="report-cards" *ngIf="report"><article><span>Total tokens</span><strong>{{ report.total }}</strong></article><article><span>Priority patients</span><strong>{{ report.priority }}</strong></article><article><span>Waiting rooms</span><strong>{{ reportEntries(report.by_room).length }}</strong></article><article><span>Doctors active</span><strong>{{ reportEntries(report.by_doctor).length }}</strong></article></section>
+      <div class="report-grid" *ngIf="report"><section class="panel report-panel"><h3>Status breakdown</h3><div class="report-row" *ngFor="let item of reportEntries(report.by_status)"><span>{{ item[0].replace('_',' ') }}</span><b>{{ item[1] }}</b></div></section><section class="panel report-panel"><h3>Shared room load</h3><div class="report-row" *ngFor="let item of reportEntries(report.by_room)"><span>{{ item[0] }}</span><b>{{ item[1] }}</b></div></section><section class="panel report-panel wide"><h3>Audit trail</h3><div class="audit-row" *ngFor="let event of auditEvents.slice(0,12)"><time>{{ event.created_at | date:'shortTime' }}</time><b>{{ event.action.replaceAll('.',' ') }}</b><span>{{ event.actor }}</span><em>{{ event.previous_status || '—' }} → {{ event.new_status || '—' }}</em><small>{{ event.reason || 'Recorded automatically' }}</small></div></section></div>
+    </section>
+
+    <section class="workspace" *ngIf="view === 'settings'">
+      <div class="intro"><div><span class="eyebrow">Authorized configuration</span><h2>Queue operations settings</h2><p>Control public privacy, queue rules and bilingual announcements.</p></div></div>
+      <div class="settings-grid"><section class="panel setting-panel" *ngFor="let setting of settings"><div class="setting-heading"><span>{{ setting.key.charAt(0).toUpperCase() }}</span><div><h3>{{ setting.key | titlecase }}</h3><p>{{ setting.description }}</p></div></div><ng-container [ngSwitch]="setting.key"><div *ngSwitchCase="'display'" class="setting-fields"><label>Patient name privacy<select [(ngModel)]="setting.value['privacy_mode']"><option value="initials">First name + initials</option><option value="token_only">Token only</option><option value="full">Full name</option></select></label><label>Upcoming token count<input type="number" min="1" max="10" [(ngModel)]="setting.value['next_token_count']"></label><label>Footer notice<input [(ngModel)]="setting.value['ticker_message']"></label></div><div *ngSwitchCase="'queue'" class="setting-fields"><label>Ordering policy<select [(ngModel)]="setting.value['ordering_policy']"><option value="priority_then_sequence">Priority, then serial</option><option value="sequence">Serial only</option></select></label><label>Recall limit<input type="number" [(ngModel)]="setting.value['recall_limit']"></label><label>Late grace minutes<input type="number" [(ngModel)]="setting.value['late_grace_minutes']"></label></div><div *ngSwitchCase="'announcement'" class="setting-fields"><label>Repeat count<input type="number" min="1" max="3" [(ngModel)]="setting.value['repeat_count']"></label><label>Speech rate<input type="number" min="0.5" max="1.5" step="0.05" [(ngModel)]="setting.value['rate']"></label><label>Volume<input type="number" min="0" max="1" step="0.1" [(ngModel)]="setting.value['volume']"></label></div></ng-container><button type="button" class="save-setting" (click)="saveSetting(setting)">Save {{ setting.key }} settings</button></section></div><p class="message" *ngIf="message">{{ message }}</p>
+    </section>
+  </main>
+
+  <section class="display" *ngIf="view === 'display'">
+    <header><div class="display-brand"><b>✚</b><span><strong>Combined Military Hospital Dhaka</strong><small>সশস্ত্র বাহিনী চিকিৎসা সেবা · Patient Queue</small></span></div><div class="display-clock"><span>Waiting room<select [(ngModel)]="selectedWaitingRoom" (ngModelChange)="waitingRoomChanged()"><option *ngFor="let room of waitingRooms" [value]="room.code">{{ room.code }}</option></select></span><button type="button" (click)="setView('doctor')">Staff console</button></div></header>
+    <main>
+      <section class="now-called"><span class="attention">NOW CALLING</span><div class="display-token">{{ displayState?.current?.token_number || '—' }}</div><h1>{{ displayState?.current?.patient_name || 'Please watch the screen' }}</h1><div class="destination" *ngIf="displayState?.current as called"><div><span>Doctor</span><strong>{{ called.doctor_name }}</strong></div><div><span>Room</span><strong>{{ called.room_number }}</strong></div></div></section>
+      <aside><ng-container *ngIf="(displayState?.active_calls?.length || 0) > 1"><span class="eyebrow light">Other active calls</span><div class="active-call" *ngFor="let token of displayState?.active_calls?.slice(1)"><b>{{ token.token_number }}</b><span>{{ token.doctor_name }} · Room {{ token.room_number }}</span></div></ng-container><span class="eyebrow light next-label">Please be ready</span><h2>Up next</h2><article *ngFor="let token of displayState?.next_tokens; let index = index"><i>{{ index + 1 }}</i><b>{{ token.token_number }}</b><span>{{ token.patient_name }}<small>{{ token.doctor_name }}</small></span></article><p *ngIf="!displayState?.next_tokens?.length">No patients waiting.</p></aside>
+    </main>
+    <footer><span class="pulse" [class.recovering]="realtimeStatus === 'recovering' || realtimeStatus === 'connecting'" [class.offline]="realtimeStatus === 'offline'"></span><strong>{{ realtimeLabel() }}</strong><p><span class="command-motto">SERVICE · DISCIPLINE · CARE</span> অনুগ্রহ করে আপনার টোকেন প্রস্তুত রাখুন · Please keep your token ready</p><b>{{ selectedWaitingRoom }}</b></footer>
+  </section>
+</div>

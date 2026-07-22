@@ -1,0 +1,10 @@
+backend/*.db
+backend/data/
+backend/.venv/
+backend/.venv-incompatible-*/
+backend/.pytest_cache/
+backend/**/__pycache__/
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+.setup/
