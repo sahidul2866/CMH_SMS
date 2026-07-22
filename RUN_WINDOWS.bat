@@ -112,8 +112,14 @@ call :free_port %BACKEND_PORT%
 call :free_port %FRONTEND_PORT%
 
 echo [7/8] Starting CMH Smart Serial services...
-start "CMH Smart Serial - Backend" cmd /k "cd /d ""%BACKEND_DIR%"" ^&^& ""%VENV_PYTHON%"" -m uvicorn app.main:app --host 127.0.0.1 --port %BACKEND_PORT%"
-start "CMH Smart Serial - Frontend" cmd /k "cd /d ""%FRONTEND_DIR%"" ^&^& ""%NPM_CMD%"" start -- --host 127.0.0.1 --port %FRONTEND_PORT%"
+set "CMH_WINDOWS_BACKEND_DIR=%BACKEND_DIR%"
+set "CMH_WINDOWS_FRONTEND_DIR=%FRONTEND_DIR%"
+set "CMH_WINDOWS_PYTHON=%VENV_PYTHON%"
+set "CMH_WINDOWS_NPM=%NPM_CMD%"
+set "CMH_WINDOWS_BACKEND_PORT=%BACKEND_PORT%"
+set "CMH_WINDOWS_FRONTEND_PORT=%FRONTEND_PORT%"
+start "CMH Smart Serial - Backend" "%PROJECT_DIR%START_BACKEND_WINDOWS.bat"
+start "CMH Smart Serial - Frontend" "%PROJECT_DIR%START_FRONTEND_WINDOWS.bat"
 
 echo [8/8] Waiting for the application to become ready...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
