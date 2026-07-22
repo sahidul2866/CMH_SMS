@@ -229,8 +229,9 @@ export class AppComponent implements OnDestroy {
     if (!state.current || state.current.id === this.lastSpokenTokenId || !('speechSynthesis' in window)) return;
     this.lastSpokenTokenId = state.current.id;
     const token = state.current;
+    const doctorName = token.doctor_name.replace(/^(doctor|dr\.?)\s+/i, '').trim();
     const utterance = new SpeechSynthesisUtterance(
-      `Attention please. ${token.patient_name}, token ${token.token_number}. Doctor ${token.doctor_name}, room ${token.room_number}.`
+      `Attention please. ${token.patient_name}, token ${token.token_number}. Doctor ${doctorName}, room ${token.room_number}.`
     );
     utterance.lang = 'en-BD';
     utterance.rate = 0.88;

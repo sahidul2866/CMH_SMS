@@ -50,10 +50,22 @@ def test_reception_to_display_flow():
     assert called["status"] == "called"
 
     display = client.get("/api/v1/displays/WR-1").json()
-    assert display["current"]["patient_name"] == "Rahim U."
+    assert display["current"]["patient_name"] == "Rahim Uddin"
     assert len(display["active_calls"]) == 1
     assert display["next_tokens"][0]["patient_name"] == "Karim A."
     assert "room 205" in display["announcement"]
+    assert "Doctor Dr." not in display["announcement"]
+
+
+def test_called_patient_uses_full_name_while_upcoming_names_remain_private():
+    called = client.post("/api/v1/tokens", json=token_payload("MD. Atiqur Rahman")).json()
+    client.post("/api/v1/tokens", json=token_payload("Karim Ahmed")).raise_for_status()
+    client.post(f"/api/v1/doctors/dr-khan/tokens/{called['id']}/call").raise_for_status()
+
+    display = client.get("/api/v1/displays/WR-1").json()
+    assert display["current"]["patient_name"] == "MD. Atiqur Rahman"
+    assert "MD. Atiqur Rahman" in display["announcement"]
+    assert display["next_tokens"][0]["patient_name"] == "Karim A."
 
 
 def test_call_and_recall_broadcast_to_all_waiting_rooms():

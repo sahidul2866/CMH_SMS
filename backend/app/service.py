@@ -139,14 +139,21 @@ class QueueService:
         next_count = max(1, min(int(values.get("next_token_count", 5)), 10))
         upcoming = [token for token in room_tokens if token.status == "waiting"][:next_count]
         privacy_mode = values.get("privacy_mode", "initials")
-        active_calls = [self._public_token(token, privacy_mode) for token in active_calls]
+        # A called patient's full name is required for an unambiguous visual and
+        # audio announcement. Privacy masking remains enabled for upcoming names.
         upcoming = [self._public_token(token, privacy_mode) for token in upcoming]
         current = active_calls[0] if active_calls else None
         announcement = None
         if current:
+            doctor_name = current.doctor_name.strip()
+            lowered_name = doctor_name.lower()
+            for prefix in ("doctor ", "dr. ", "dr "):
+                if lowered_name.startswith(prefix):
+                    doctor_name = doctor_name[len(prefix):].strip()
+                    break
             announcement = (
                 f"Token {current.token_number}, {current.patient_name}. Please proceed to "
-                f"Doctor {current.doctor_name}, room {current.room_number}."
+                f"Doctor {doctor_name}, room {current.room_number}."
             )
         return DisplayRead(waiting_room=waiting_room, current=current, active_calls=active_calls, next_tokens=upcoming, announcement=announcement)
 
