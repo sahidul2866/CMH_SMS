@@ -1,6 +1,7 @@
 """Add audited queue operations and settings."""
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "20260722_0003"
 down_revision = "20260722_0002"

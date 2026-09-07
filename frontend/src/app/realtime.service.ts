@@ -24,7 +24,10 @@ export class RealtimeService {
       };
       const open = () => {
         this.statusSubject.next(attempts ? 'recovering' : 'connecting');
-        socket = new WebSocket(`ws://127.0.0.1:8100/api/v1/realtime/waiting-rooms/${encodeURIComponent(waitingRoom)}`);
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        socket = new WebSocket(
+          `${protocol}//${window.location.host}/api/v1/realtime/waiting-rooms/${encodeURIComponent(waitingRoom)}`,
+        );
         socket.onopen = () => {
           attempts = 0;
           this.statusSubject.next('connected');
@@ -36,9 +39,14 @@ export class RealtimeService {
           try { subscriber.next(JSON.parse(message.data) as RealtimeEvent); } catch { /* Ignore malformed events. */ }
         };
         socket.onerror = () => socket?.close();
-        socket.onclose = () => {
+        socket.onclose = (event) => {
           clearTimers();
           if (closedByClient) return;
+          if (event.code === 4401) {
+            this.statusSubject.next('offline');
+            window.location.assign('/');
+            return;
+          }
           attempts += 1;
           this.statusSubject.next(attempts < 4 ? 'recovering' : 'offline');
           reconnectTimer = window.setTimeout(open, Math.min(1000 * 2 ** (attempts - 1), 10000));

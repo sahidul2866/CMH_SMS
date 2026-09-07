@@ -17,9 +17,55 @@ If you prefer Git Bash, MSYS2, or Cygwin, run the same launcher through
 bash run.sh
 ```
 
-The launcher installs missing prerequisites with `winget`, creates the local Python environment, installs changed dependencies, creates and migrates the database, loads seed data once, clears occupied application ports, starts both services, waits for readiness, and opens the application.
+The launcher installs missing Python and optional eSpeak NG prerequisites with
+`winget`, creates the local Python environment, installs changed dependencies,
+creates and migrates the database, creates the initial administrator, builds the
+uses the bundled prebuilt frontend, configures a private-network firewall rule, starts one LAN-visible
+server, waits for readiness, and opens the application.
+
+On the first run, note the administrator password printed in the launcher. A
+copy is stored locally at `.setup\INITIAL_ADMIN_LOGIN.txt`. The launcher never
+resets an existing administrator or database.
 
 It is safe to run repeatedly. Completed steps are skipped, existing database data is preserved, and only pending database migrations are applied.
+
+## Keep the server running automatically
+
+After `RUN_WINDOWS.bat` completes successfully once, right-click
+`INSTALL_AUTOSTART_WINDOWS.bat` and choose **Run as administrator**. It creates
+an unlimited Task Scheduler job for the current staff account, disables AC
+sleep/hibernation, starts the server at every login, and restarts it after a
+crash.
+
+The scheduled job deliberately runs in the signed-in user's interactive
+session rather than as a Windows service. This is required for announcements to
+play through the Windows sound output. Keep that staff account signed in and
+lock the screen with `Win+L` instead of signing out.
+
+To remove automatic startup without deleting data, run
+`UNINSTALL_AUTOSTART_WINDOWS.bat`.
+
+## Build the shareable installer EXE
+
+On one internet-connected Windows build PC, run:
+
+```text
+BUILD_WINDOWS_INSTALLER.bat
+```
+
+The build downloads the offline Bengali model when necessary, freezes FastAPI,
+Uvicorn, Python and all dependencies with PyInstaller, and compiles an Inno
+Setup installer. The result is:
+
+```text
+installer-output\CMH-Smart-Serial-Setup.exe
+```
+
+Only that installer EXE needs to be shared with hospital PCs. Target PCs do not
+need Python, Node.js, npm, source code or internet. Application data and the
+database are stored under `C:\ProgramData\CMH Smart Serial`, outside the
+installation folder, so upgrades and uninstall/reinstall cycles do not erase
+operational records.
 
 The remaining sections document the same process manually for troubleshooting or controlled installation.
 
@@ -32,6 +78,25 @@ winget install --id Python.Python.3.12 -e
 winget install --id OpenJS.NodeJS.LTS -e
 winget install --id Git.Git -e
 ```
+
+The automatic launcher installs eSpeak NG when possible. For a manual setup,
+install it with:
+
+```powershell
+winget install --id eSpeak-NG.eSpeak-NG -e
+```
+
+Keep the default installation directory (`C:\Program Files\eSpeak NG`) so the
+application can find it automatically. This supplies the complete personalized
+Bangla and English fallback announcements without internet access.
+
+The recommended higher-quality option is the offline Bengali neural voice. On
+the first run, the launcher installs its runtime and downloads Meta's
+`facebook/mms-tts-ben` model into `backend\data\models\mms-tts-ben`. After that
+download, generation is entirely local. Select **Offline neural** under
+**Settings → Queue & display → Announcement**, save, and use **Test selected
+voice**. The model is licensed CC BY-NC 4.0 and is included here only for the
+hospital's non-commercial internal deployment; see `THIRD_PARTY_MODELS.md`.
 
 Close PowerShell, open it again, and confirm the installations:
 
@@ -122,7 +187,7 @@ Confirm the installed migration:
 Expected result:
 
 ```text
-20260722_0003 (head)
+20260818_0013 (head)
 ```
 
 The seed command is idempotent. Running it again updates system configuration and demo data without duplicating the daily demonstration queue.
@@ -141,15 +206,20 @@ npm ci
 Set-Location ..
 ```
 
-## 6. Start the application
+## 6. Build and start the application
 
-Use two PowerShell windows.
+Build the frontend once:
 
-### PowerShell window 1 — backend
+```powershell
+Set-Location C:\CMH\CMH_SMS\frontend
+npm run build
+```
+
+Start the combined server:
 
 ```powershell
 Set-Location C:\CMH\CMH_SMS\backend
-.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8100
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8100
 ```
 
 Wait for:
@@ -158,27 +228,21 @@ Wait for:
 Application startup complete.
 ```
 
-### PowerShell window 2 — frontend
-
-```powershell
-Set-Location C:\CMH\CMH_SMS\frontend
-npm start -- --host 127.0.0.1 --port 4300
-```
-
 Open these addresses in Chrome or Edge:
 
-- Application: <http://127.0.0.1:4300>
+- Application on server: <http://127.0.0.1:8100>
+- Application on wired clients: `http://SERVER-PC-IP:8100`
 - API health: <http://127.0.0.1:8100/api/v1/health>
 - API documentation: <http://127.0.0.1:8100/docs>
 
-Press `Ctrl+C` in each PowerShell window to stop the services.
+Press `Ctrl+C` to stop the server.
 
 ## 7. Free occupied ports
 
-If port `8100` or `4300` is already in use, open PowerShell as Administrator and identify the listening process:
+If port `8100` is already in use, open PowerShell as Administrator and identify the listening process:
 
 ```powershell
-Get-NetTCPConnection -State Listen -LocalPort 8100,4300 |
+Get-NetTCPConnection -State Listen -LocalPort 8100 |
     Select-Object LocalPort, OwningProcess
 ```
 
@@ -194,7 +258,7 @@ Stop only the confirmed process:
 Stop-Process -Id <PID> -Force
 ```
 
-Then start the backend and frontend again.
+Then start the combined server again.
 
 ## 8. Verify the new database
 
@@ -212,6 +276,13 @@ The seed should provide:
 - Four doctors
 - Queue, display, and announcement settings
 - Realistic demonstration tokens
+
+In the health response, confirm:
+
+```text
+audio.ready: true
+audio.bangla_supported: true
+```
 
 ## 9. Run automated checks
 
@@ -258,9 +329,19 @@ Set-Location backend
 
 ## 11. Windows Firewall
 
-No inbound firewall rule is normally required for a single-computer demonstration using `127.0.0.1`.
+The server must accept TCP port `8100` from the wired CMH subnet. In an
+Administrator PowerShell window, replace the example subnet with the address
+range approved by CMH ICT:
 
-Do not expose ports to the hospital LAN until the application has production authentication, RBAC, HTTPS/WSS, approved firewall rules, and a configured server address. The current local setup is intended for development and demonstration.
+```powershell
+New-NetFirewallRule -DisplayName "CMH Smart Serial LAN" `
+  -Direction Inbound -Protocol TCP -LocalPort 8100 `
+  -RemoteAddress 192.168.50.0/24 -Action Allow -Profile Domain,Private
+```
+
+Do not create an unrestricted Public-profile rule. CMH ICT should assign a
+static/DHCP-reserved server address and restrict the switch VLAN and firewall to
+the radiographer and reception PCs.
 
 ## Troubleshooting
 
@@ -280,17 +361,18 @@ backend\.venv\Scripts\python.exe
 
 Restart PowerShell after installing Node.js. Confirm with `node --version` and `npm --version`.
 
-### Frontend reports that the API is unavailable
+### A wired client reports that the API is unavailable
 
-Confirm the backend is running on port `8100` and open:
+On the server, confirm:
 
 ```text
 http://127.0.0.1:8100/api/v1/health
 ```
 
-The backend accepts the Angular development UI on ports `4200` and `4300`,
-using either `localhost` or `127.0.0.1`. Restart the backend after changing or
-updating the application so the CORS configuration is reloaded.
+Then confirm the client can ping the server IP and open
+`http://SERVER-PC-IP:8100/api/v1/health`. Never use `localhost` on a client PC.
+Check the Cat6 link light, switch/VLAN assignment, Windows firewall scope and
+server IP reservation.
 
 ### Migration fails
 

@@ -1,6 +1,7 @@
 """Add armed-forces service identity to queue registration."""
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "20260722_0002"
 down_revision = "20260722_0001"

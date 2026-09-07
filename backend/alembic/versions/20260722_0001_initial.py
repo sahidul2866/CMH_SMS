@@ -1,6 +1,7 @@
 """Initial standalone CMH Smart Serial schema."""
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "20260722_0001"
 down_revision = None
@@ -14,8 +15,8 @@ def upgrade() -> None:
         sa.Column("display_label", sa.String(120), nullable=False),
         sa.Column("audio_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("display_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()), sa.UniqueConstraint("code"))
-    op.create_index("ix_waiting_rooms_code", "waiting_rooms", ["code"])
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()))
+    op.create_index("ix_waiting_rooms_code", "waiting_rooms", ["code"], unique=True)
     op.create_table("doctors",
         sa.Column("id", sa.String(60), primary_key=True), sa.Column("name", sa.String(160), nullable=False),
         sa.Column("department", sa.String(120), nullable=False), sa.Column("designation", sa.String(120), nullable=False),

@@ -1,0 +1,11 @@
+[Unit]
+Description=CMH Smart Serial PostgreSQL backup
+
+[Service]
+Type=oneshot
+User=cmh-sms
+Group=cmh-sms
+WorkingDirectory=/opt/cmh-sms
+ExecStart=/opt/cmh-sms/scripts/backup.sh
+PrivateTmp=true
+NoNewPrivileges=true

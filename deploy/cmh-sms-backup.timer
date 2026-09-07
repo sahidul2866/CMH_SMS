@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily CMH Smart Serial backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=cmh-sms-backup.service
+
+[Install]
+WantedBy=timers.target

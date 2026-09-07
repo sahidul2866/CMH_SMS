@@ -1,0 +1,5 @@
+# Natural Bengali neural speech, downloaded once and then used fully offline.
+torch>=2.7,<3
+transformers>=4.53,<5
+scipy>=1.15,<2
+sentencepiece>=0.2,<1

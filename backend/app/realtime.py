@@ -60,11 +60,7 @@ class WaitingRoomHub:
         """Send an announcement to every connected waiting-room display."""
         event = self.event(waiting_room, event_type, reason, **payload)
         async with self._lock:
-            clients = [
-                (room, client)
-                for room, room_clients in self._connections.items()
-                for client in room_clients
-            ]
+            clients = [(room, client) for room, room_clients in self._connections.items() for client in room_clients]
         stale: list[tuple[str, WebSocket]] = []
         for room, client in clients:
             try:

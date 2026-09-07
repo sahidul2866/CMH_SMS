@@ -9,7 +9,7 @@ if not defined CMH_WINDOWS_BACKEND_PORT goto :missing_configuration
 cd /d "%CMH_WINDOWS_BACKEND_DIR%"
 if errorlevel 1 goto :invalid_directory
 
-"%CMH_WINDOWS_PYTHON%" -m uvicorn app.main:app --host 127.0.0.1 --port %CMH_WINDOWS_BACKEND_PORT%
+"%CMH_WINDOWS_PYTHON%" -m uvicorn app.main:app --host 0.0.0.0 --port %CMH_WINDOWS_BACKEND_PORT%
 if errorlevel 1 goto :failed
 exit /b 0
 
