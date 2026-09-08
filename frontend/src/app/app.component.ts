@@ -3,7 +3,7 @@ import { Component, HostListener, OnDestroy, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Subscription, interval } from 'rxjs';
 
-import { MonthlySummary, PatientClassification, AppSetting, Appointment, AuditEvent, AuthUser, DeviceEndpoint, DisplayState, Doctor, Holiday, LookupOption, Patient, PermissionDefinition, QueueReport, QueueToken, RadiographyDashboard, RealtimeStatus, ReceptionReportRow, RoleDefinition, ScheduleSlot, SmsMessage, View, WaitingRoom } from './models';
+import { MonthlySummary, PatientClassification, AppSetting, Appointment, AuditEvent, AuthUser, DashboardRoom, DeviceEndpoint, DisplayState, Doctor, Holiday, LookupOption, Patient, PermissionDefinition, QueueReport, QueueToken, RadiographyDashboard, RealtimeStatus, ReceptionReportRow, RoleDefinition, ScheduleSlot, SmsMessage, View, WaitingRoom } from './models';
 import { QueueApiService } from './queue-api.service';
 import { ModalComponent } from './modal.component';
 import { RealtimeService } from './realtime.service';
@@ -38,6 +38,7 @@ export class AppComponent implements OnDestroy {
   previousView: View = 'dashboard';
   dashboardDetail = '';
   dashboardPatients: QueueToken[] = [];
+  selectedWaitRoom = '';
   detailLoading = false;
   detailError = '';
   patientDetail: QueueToken | null = null;
@@ -1120,10 +1121,36 @@ export class AppComponent implements OnDestroy {
   openDoctor(doctor: Doctor): void { this.selectedDoctorId = doctor.id; this.doctorOpened = true; this.tokens = []; this.refresh(); }
   openDashboardDetail(detail: string): void {
     this.dashboardDetail = detail;
+    this.selectedWaitRoom = '';
     const url = new URL(window.location.href); url.searchParams.set('detail', detail); window.history.pushState({}, '', url);
     this.loadDashboardPatients(); window.scrollTo({ top: 0 });
   }
-  get dashboardDetailTitle(): string { return ({ all: 'All patients today', waiting: 'Waiting patients', called: 'Called patients', in_progress: 'Patients in service', completed: 'Completed patients', vip: 'VIP patients', wait: 'Patient waiting times' } as Record<string,string>)[this.dashboardDetail] || 'Patients'; }
+  get dashboardDetailTitle(): string { return ({ all: 'All patients today', waiting: 'Waiting patients', called: 'Called patients', in_progress: 'Patients in service', completed: 'Completed patients', vip: 'VIP patients', wait: 'Average wait time per room' } as Record<string,string>)[this.dashboardDetail] || 'Patients'; }
+  get dashboardRooms(): DashboardRoom[] {
+    if (this.dashboard?.rooms?.length) {
+      return this.dashboard.rooms;
+    }
+    if (this.dashboard?.radiographers?.length) {
+      return this.dashboard.radiographers.map(r => ({
+        room_number: r.room_number,
+        doctor_name: r.doctor_name,
+        department: r.department,
+        waiting_room: r.waiting_room,
+        waiting: r.waiting,
+        called: r.called,
+        in_progress: r.in_progress,
+        completed: r.completed,
+        total: r.total,
+        average_wait_minutes: r.average_wait_minutes,
+        vip: r.vip,
+      }));
+    }
+    return [];
+  }
+  get waitDetailPatients(): QueueToken[] {
+    if (!this.selectedWaitRoom) return this.dashboardPatients;
+    return this.dashboardPatients.filter(t => (t.room_number || '').trim() === this.selectedWaitRoom.trim());
+  }
   loadDashboardPatients(showLoading = true): void {
     if (showLoading) { this.detailLoading = true; this.dashboardPatients = []; }
     this.detailError = '';

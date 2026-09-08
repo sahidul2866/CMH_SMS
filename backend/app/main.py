@@ -85,6 +85,7 @@ from .schemas import (
     AuditRead,
     DashboardDoctorRead,
     DashboardRead,
+    DashboardRoomRead,
     DeviceCreate,
     DeviceRead,
     DisplayRead,
@@ -1268,6 +1269,54 @@ def dashboard(user: User = Depends(require_permission("dashboard.view")), db: Se
             vip=sum(token.priority == "vip" for token in doctor_tokens),
         ))
     vip_tokens = [token for token in tokens if token.priority == "vip"]
+
+    all_room_numbers = set()
+    for doctor, _ in doctors:
+        if doctor.room_number:
+            all_room_numbers.add(doctor.room_number)
+    for token in tokens:
+        if token.room_number:
+            all_room_numbers.add(token.room_number)
+    if not assigned_only:
+        lookup_rooms = db.scalars(
+            select(LookupOption.value).where(LookupOption.category == "room_number", LookupOption.is_active.is_(True))
+        ).all()
+        for lr in lookup_rooms:
+            if lr:
+                all_room_numbers.add(lr)
+
+    def room_sort_key(val: str):
+        digits = "".join(ch for ch in val if ch.isdigit())
+        return (int(digits) if digits else 9999, val)
+
+    sorted_rooms = sorted(all_room_numbers, key=room_sort_key)
+    room_stats = []
+    for r_num in sorted_rooms:
+        r_doctors = [doc for doc, _ in doctors if doc.room_number == r_num]
+        r_doc_ids = {doc.id for doc in r_doctors}
+        r_tokens = [
+            token for token in tokens
+            if token.room_number == r_num or (not token.room_number and token.doctor_id in r_doc_ids)
+        ]
+        r_counts, r_wait = metrics(r_tokens)
+        r_doc_name = ", ".join(d.name for d in r_doctors) if r_doctors else ""
+        r_dept = ", ".join(sorted({d.department for d in r_doctors if d.department})) if r_doctors else ""
+        r_wr = ", ".join(sorted({rm.code for doc, rm in doctors if doc.room_number == r_num})) if r_doctors else ""
+
+        room_stats.append(DashboardRoomRead(
+            room_number=r_num,
+            doctor_name=r_doc_name,
+            department=r_dept,
+            waiting_room=r_wr,
+            waiting=r_counts.get("waiting", 0),
+            called=r_counts.get("called", 0) + r_counts.get("recalled", 0),
+            in_progress=r_counts.get("in_progress", 0),
+            completed=r_counts.get("completed", 0),
+            total=len(r_tokens),
+            average_wait_minutes=r_wait,
+            vip=sum(token.priority == "vip" for token in r_tokens),
+        ))
+
     return DashboardRead(
         scope="assigned" if assigned_only else "all", generated_at=datetime.utcnow(), total=len(tokens),
         waiting=counts.get("waiting", 0),
@@ -1280,6 +1329,7 @@ def dashboard(user: User = Depends(require_permission("dashboard.view")), db: Se
         vip_active=sum(token.status in {"called", "recalled", "in_progress"} for token in vip_tokens),
         vip_completed=sum(token.status == "completed" for token in vip_tokens),
         radiographers=radiographers,
+        rooms=room_stats,
     )
 
 

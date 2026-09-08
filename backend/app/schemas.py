@@ -86,6 +86,20 @@ class DashboardDoctorRead(BaseModel):
     vip: int
 
 
+class DashboardRoomRead(BaseModel):
+    room_number: str
+    doctor_name: str = ""
+    department: str = ""
+    waiting_room: str = ""
+    waiting: int = 0
+    called: int = 0
+    in_progress: int = 0
+    completed: int = 0
+    total: int = 0
+    average_wait_minutes: int = 0
+    vip: int = 0
+
+
 class DashboardRead(BaseModel):
     scope: Literal["assigned", "all"]
     generated_at: datetime
@@ -100,6 +114,7 @@ class DashboardRead(BaseModel):
     vip_active: int
     vip_completed: int
     radiographers: list[DashboardDoctorRead]
+    rooms: list[DashboardRoomRead] = []
 
 
 class QueueActionRequest(BaseModel):

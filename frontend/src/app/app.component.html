@@ -42,25 +42,92 @@
     <section class="workspace dashboard-workspace" *ngIf="view === 'dashboard' && dashboard as data">
       <ng-container *ngIf="!dashboardDetail; else dashboardDetails">
         <div class="intro"><div><h2>Today at a glance</h2><p>Select a number to see the patients.</p></div><small>Updated {{ data.generated_at | date:'shortTime' }}</small></div>
-        <div class="summary-grid">
+        <div class="summary-grid summary-grid-primary">
           <button type="button" (click)="openDashboardDetail('all')"><span>Total patients</span><strong>{{ data.total }}</strong><small>View patients →</small></button>
+          <button type="button" (click)="openDashboardDetail('vip')"><span>VIP patients</span><strong>{{ data.vip_total }}</strong><small>View patients →</small></button>
+        </div>
+        <div class="summary-grid summary-grid-secondary">
           <button type="button" (click)="openDashboardDetail('waiting')"><span>Waiting</span><strong>{{ data.waiting }}</strong><small>View patients →</small></button>
           <button type="button" (click)="openDashboardDetail('called')"><span>Called</span><strong>{{ data.called }}</strong><small>View patients →</small></button>
           <button type="button" (click)="openDashboardDetail('in_progress')"><span>In service</span><strong>{{ data.in_progress }}</strong><small>View patients →</small></button>
           <button type="button" (click)="openDashboardDetail('completed')"><span>Completed</span><strong>{{ data.completed }}</strong><small>View patients →</small></button>
-          <button type="button" (click)="openDashboardDetail('vip')"><span>VIP patients</span><strong>{{ data.vip_total }}</strong><small>View patients →</small></button>
           <button type="button" (click)="openDashboardDetail('wait')"><span>Average wait</span><strong>{{ data.average_wait_minutes }} <small>min</small></strong><small>View waiting times →</small></button>
         </div>
       </ng-container>
       <ng-template #dashboardDetails>
         <button type="button" class="quiet-button" (click)="setView('dashboard')">← Back to dashboard</button>
-        <div class="intro"><div><h2>{{ dashboardDetailTitle }}</h2><p>{{ dashboardPatients.length }} records · Today</p></div><button type="button" class="quiet-button" (click)="loadDashboardPatients()">Refresh</button></div>
-        <p role="status" *ngIf="detailLoading">Loading patients…</p><p role="alert" *ngIf="detailError">{{ detailError }}</p>
-        <div class="panel compact-table" *ngIf="!detailLoading">
-          <div class="detail-row table-head"><span>Serial</span><span>Patient</span><span>MRI / source</span><span>Room</span><span>Status</span><span>Wait</span></div>
-          <button type="button" class="detail-row" *ngFor="let token of dashboardPatients; trackBy: trackToken" (click)="patientDetail = token"><b>{{ token.serial_number || token.token_number }}</b><span>{{ token.patient_name }}<small>{{ lookupLabel('rank_relationship', token.rank) }}{{ token.priority === 'vip' ? ' · VIP' : '' }}</small></span><span>{{ token.mri_area || '—' }}<small>{{ lookupLabel('patient_source', token.patient_source) }}</small></span><span>{{ token.room_number || 'Unassigned' }}</span><span>{{ token.status.replaceAll('_',' ') }}</span><span>{{ token.waiting_minutes }} min</span></button>
-          <p class="empty" *ngIf="!dashboardPatients.length && !detailError">No patients in this group today.</p>
-        </div>
+
+        <ng-container *ngIf="dashboardDetail === 'wait'; else standardDetails">
+          <div class="intro">
+            <div>
+              <h2>Average wait time per room</h2>
+              <p>Overall average: <strong>{{ data.average_wait_minutes }} min</strong> across all rooms · Today</p>
+            </div>
+            <button type="button" class="quiet-button" (click)="loadDashboardPatients(); loadDashboard()">Refresh</button>
+          </div>
+          <p role="status" *ngIf="detailLoading">Loading room data…</p>
+          <p role="alert" *ngIf="detailError">{{ detailError }}</p>
+
+          <div class="room-wait-grid" *ngIf="!detailLoading">
+            <article class="room-wait-card" *ngFor="let room of dashboardRooms" [class.active]="selectedWaitRoom === room.room_number" (click)="selectedWaitRoom = selectedWaitRoom === room.room_number ? '' : room.room_number">
+              <div class="room-wait-header">
+                <div>
+                  <span class="room-badge">Room {{ room.room_number }}</span>
+                  <strong class="room-doctor">{{ room.doctor_name || 'Room ' + room.room_number }}</strong>
+                  <small class="room-dept" *ngIf="room.department">{{ room.department }}</small>
+                </div>
+                <div class="room-wait-metric">
+                  <span class="metric-label">Avg wait</span>
+                  <strong class="metric-val">{{ room.average_wait_minutes }} <small>min</small></strong>
+                </div>
+              </div>
+              <div class="room-wait-stats">
+                <span>Waiting: <b>{{ room.waiting }}</b></span>
+                <span>Served: <b>{{ room.called + room.in_progress + room.completed }}</b></span>
+                <span>Total: <b>{{ room.total }}</b></span>
+                <span class="filter-hint">{{ selectedWaitRoom === room.room_number ? '✓ Filtered (click to clear)' : 'Click to filter' }}</span>
+              </div>
+            </article>
+            <p class="empty" *ngIf="!dashboardRooms.length">No rooms configured.</p>
+          </div>
+
+          <div class="wait-patient-section" *ngIf="!detailLoading">
+            <div class="wait-section-header">
+              <h3>
+                Patient waiting list
+                <span class="count-tag" *ngIf="selectedWaitRoom">Room {{ selectedWaitRoom }} ({{ waitDetailPatients.length }})</span>
+                <span class="count-tag" *ngIf="!selectedWaitRoom">All rooms ({{ waitDetailPatients.length }})</span>
+              </h3>
+              <div class="room-filter-chips">
+                <button type="button" class="chip" [class.active]="!selectedWaitRoom" (click)="selectedWaitRoom = ''">All rooms</button>
+                <button type="button" class="chip" *ngFor="let room of dashboardRooms" [class.active]="selectedWaitRoom === room.room_number" (click)="selectedWaitRoom = room.room_number">Room {{ room.room_number }}</button>
+              </div>
+            </div>
+
+            <div class="panel compact-table">
+              <div class="detail-row table-head"><span>Serial</span><span>Patient</span><span>MRI / source</span><span>Room</span><span>Status</span><span>Wait</span></div>
+              <button type="button" class="detail-row" *ngFor="let token of waitDetailPatients; trackBy: trackToken" (click)="patientDetail = token">
+                <b>{{ token.serial_number || token.token_number }}</b>
+                <span>{{ token.patient_name }}<small>{{ lookupLabel('rank_relationship', token.rank) }}{{ token.priority === 'vip' ? ' · VIP' : '' }}</small></span>
+                <span>{{ token.mri_area || '—' }}<small>{{ lookupLabel('patient_source', token.patient_source) }}</small></span>
+                <span>{{ token.room_number || 'Unassigned' }}</span>
+                <span>{{ token.status.replaceAll('_',' ') }}</span>
+                <span>{{ token.waiting_minutes }} min</span>
+              </button>
+              <p class="empty" *ngIf="!waitDetailPatients.length && !detailError">No patients for this room today.</p>
+            </div>
+          </div>
+        </ng-container>
+
+        <ng-template #standardDetails>
+          <div class="intro"><div><h2>{{ dashboardDetailTitle }}</h2><p>{{ dashboardPatients.length }} records · Today</p></div><button type="button" class="quiet-button" (click)="loadDashboardPatients()">Refresh</button></div>
+          <p role="status" *ngIf="detailLoading">Loading patients…</p><p role="alert" *ngIf="detailError">{{ detailError }}</p>
+          <div class="panel compact-table" *ngIf="!detailLoading">
+            <div class="detail-row table-head"><span>Serial</span><span>Patient</span><span>MRI / source</span><span>Room</span><span>Status</span><span>Wait</span></div>
+            <button type="button" class="detail-row" *ngFor="let token of dashboardPatients; trackBy: trackToken" (click)="patientDetail = token"><b>{{ token.serial_number || token.token_number }}</b><span>{{ token.patient_name }}<small>{{ lookupLabel('rank_relationship', token.rank) }}{{ token.priority === 'vip' ? ' · VIP' : '' }}</small></span><span>{{ token.mri_area || '—' }}<small>{{ lookupLabel('patient_source', token.patient_source) }}</small></span><span>{{ token.room_number || 'Unassigned' }}</span><span>{{ token.status.replaceAll('_',' ') }}</span><span>{{ token.waiting_minutes }} min</span></button>
+            <p class="empty" *ngIf="!dashboardPatients.length && !detailError">No patients in this group today.</p>
+          </div>
+        </ng-template>
       </ng-template>
     </section>
 
