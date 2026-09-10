@@ -94,11 +94,16 @@ export interface RadiographerDashboardRow {
   doctor_id: string; doctor_name: string; department: string; room_number: string; waiting_room: string;
   waiting: number; called: number; in_progress: number; completed: number; total: number; average_wait_minutes: number; vip: number;
 }
+export interface DashboardRoom {
+  room_number: string; doctor_name?: string; department?: string; waiting_room?: string;
+  waiting: number; called: number; in_progress: number; completed: number; total: number; average_wait_minutes: number; vip: number;
+}
 export interface RadiographyDashboard {
   scope: 'assigned' | 'all'; generated_at: string; total: number; waiting: number; called: number;
   in_progress: number; completed: number; average_wait_minutes: number;
   vip_total: number; vip_waiting: number; vip_active: number; vip_completed: number;
   radiographers: RadiographerDashboardRow[];
+  rooms?: DashboardRoom[];
 }
 export interface AuditEvent { id: string; action: string; actor: string; token_id?: string | null; previous_status?: string | null; new_status?: string | null; reason?: string | null; detail: Record<string, unknown>; created_at: string; }
 export interface AppSetting { key: string; value: Record<string, any>; description: string; updated_at: string; }
