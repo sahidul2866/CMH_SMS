@@ -39,6 +39,8 @@ class QueueService:
         self.db = db
 
     def create_token(self, payload: TokenCreate, actor: str = "reception.operator") -> TokenRead:
+        from .registration import validate_registration
+        validate_registration(self.db, payload)
         self._require_lookup("service_category", payload.service_category)
         self._require_lookup("priority_category", payload.priority)
         if payload.patient_title:

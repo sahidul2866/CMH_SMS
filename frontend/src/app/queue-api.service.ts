@@ -52,6 +52,10 @@ export class QueueApiService {
     return this.http.post<QueueToken>(`${this.baseUrl}/tokens`, payload);
   }
 
+  updateWaitingPatient(id: string, payload: Record<string, string | number | null>) { return this.http.patch<QueueToken>(`${this.baseUrl}/tokens/${id}`, payload); }
+  radiographerStatus() { return this.http.get<{id: string; name: string; room: string; occupied: boolean}[]>(`${this.baseUrl}/radiographers/status`); }
+  createDoctor(payload: Record<string, unknown>) { return this.http.post(`${this.baseUrl}/admin/doctors`, payload); }
+  removeDoctor(id: string) { return this.http.delete<void>(`${this.baseUrl}/admin/doctors/${id}`); }
   listDoctors() {
     return this.http.get<Doctor[]>(`${this.baseUrl}/doctors`);
   }
@@ -103,6 +107,8 @@ export class QueueApiService {
   receptionReportExcel(params: Record<string, string>) { return this.http.get(`${this.baseUrl}/reports/reception.xlsx`, { params, responseType: 'blob', observe: 'response' }); }
   receptionReportPdf(params: Record<string, string>) { return this.http.get(`${this.baseUrl}/reports/reception.pdf`, { params, responseType: 'blob', observe: 'response' }); }
   audit() { return this.http.get<AuditEvent[]>(`${this.baseUrl}/audit`); }
+  registrationFields() { return this.http.get<{fields: Record<string, string>; required: string[]}>(`${this.baseUrl}/registration-fields`); }
+  saveRegistrationFields(required: string[]) { return this.http.put(`${this.baseUrl}/registration-fields`, {value: {required}}); }
   settings() { return this.http.get<AppSetting[]>(`${this.baseUrl}/settings`); }
   saveSetting(key: string, value: Record<string, any>) { return this.http.put<AppSetting>(`${this.baseUrl}/settings/${key}`, { value }); }
   testAnnouncement(value: Record<string, any>) { return this.http.post<{ status: string; voice_mode: string }>(`${this.baseUrl}/settings/announcement/test`, { value }); }

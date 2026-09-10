@@ -67,7 +67,8 @@ export class AppComponent implements OnDestroy {
   dashboard: RadiographyDashboard | null = null;
   auditEvents: AuditEvent[] = [];
   reportTab: 'register' | 'summary' = 'register';
-  summaryMonth = TODAY_LOCAL.slice(0, 7);
+  summaryFrom = `${TODAY_LOCAL.slice(0, 7)}-01`;
+  summaryTo = TODAY_LOCAL;
   summaryBasis = 'registrations';
   monthlySummary: MonthlySummary | null = null;
   summaryLoading = false;
@@ -104,15 +105,15 @@ export class AppComponent implements OnDestroy {
   }
   loadMonthlySummary(): void {
     this.summaryLoading = true; this.monthlySummary = null; this.summaryPatients = null;
-    this.api.monthlySummary({ month: this.summaryMonth, basis: this.summaryBasis }).subscribe({
+    this.api.monthlySummary({ date_from: this.summaryFrom, date_to: this.summaryTo, basis: this.summaryBasis }).subscribe({
       next: data => { this.monthlySummary = data; this.summaryLoading = false; },
       error: error => { this.message = this.apiErrorMessage(error, 'Could not load monthly summary.'); this.summaryLoading = false; }
     });
   }
   showSummaryPatients(day = '', category = ''): void {
     if (!this.monthlySummary) return;
-    this.summaryPatientsTitle = `${day || this.monthlySummary.month} · ${this.monthlySummary.columns.find(col => col.key === category)?.label || (category === 'unclassified' ? 'Needs review' : 'All patients')}`;
-    this.api.summaryPatients({ month: this.monthlySummary.month, basis: this.monthlySummary.basis, ...(day ? {day} : {}), ...(category ? {category} : {}) }).subscribe({
+    this.summaryPatientsTitle = `${day || this.monthlySummary.date_from + ' – ' + this.monthlySummary.date_to} · ${this.monthlySummary.columns.find(col => col.key === category)?.label || (category === 'unclassified' ? 'Needs review' : 'All patients')}`;
+    this.api.summaryPatients({ date_from: this.monthlySummary.date_from, date_to: this.monthlySummary.date_to, basis: this.monthlySummary.basis, ...(day ? {day} : {}), ...(category ? {category} : {}) }).subscribe({
       next: rows => this.summaryPatients = rows,
       error: error => this.message = this.apiErrorMessage(error, 'Could not load patients.')
     });
@@ -120,9 +121,9 @@ export class AppComponent implements OnDestroy {
   exportMonthlySummary(format: 'xlsx' | 'pdf'): void {
     if (!this.monthlySummary) return;
     this.summaryExporting = true;
-    const {month, basis} = this.monthlySummary;
-    this.api.summaryExport(format, {month, basis}).subscribe({
-      next: blob => { const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `mri-summary-${month}-${basis}.${format}`; anchor.click(); URL.revokeObjectURL(url); this.summaryExporting = false; },
+    const {date_from, date_to, basis} = this.monthlySummary;
+    this.api.summaryExport(format, {date_from, date_to, basis}).subscribe({
+      next: blob => { const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `mri-summary-${date_from}-${date_to}-${basis}.${format}`; anchor.click(); URL.revokeObjectURL(url); this.summaryExporting = false; },
       error: () => { this.message = 'Could not export the monthly summary.'; this.summaryExporting = false; }
     });
   }
@@ -144,7 +145,7 @@ export class AppComponent implements OnDestroy {
   reportExporting = false;
   reportPdfExporting = false;
   settings: AppSetting[] = [];
-  settingsTab: 'general' | 'account' | 'users' | 'roles' | 'master-data' | 'operations' = 'general';
+  settingsTab: 'general' | 'account' | 'users' | 'roles' | 'master-data' | 'operations' | 'radiographers' = 'general';
   passwordForm = { current: '', next: '', confirm: '' };
   passwordBusy = false;
   audioTestBusy = false;
@@ -172,7 +173,53 @@ export class AppComponent implements OnDestroy {
   form = { beneficiary_type: '', service_status: '', entitlement: '', sponsor_rank: '', family_relationship: '', patient_title: '', patient_name: '', patient_phone: '', service_category: 'civilian', rank: '', service_number: '', priority: 'normal', age: null as number | null, unit: '', mri_area: '', contrast: null as number | null, film: null as number | null, report: '', patient_source: '' };
   registrationSerial = '';
   registrationServerDate = '';
+  requiredFields = ['patient_name'];
+  registrationFields: Record<string, string> = {};
+  requiredDraft: Record<string, boolean> = {};
+  loadRegistrationFields(): void {
+    this.api.registrationFields().subscribe({next: data => {this.requiredFields = data.required; this.registrationFields = data.fields; this.requiredDraft = Object.fromEntries(Object.keys(data.fields).map(key => [key, data.required.includes(key)]));}, error: () => this.message = 'Could not load registration requirements.'});
+  }
+  saveRequiredFields(): void {
+    this.api.saveRegistrationFields(Object.keys(this.requiredDraft).filter(key => this.requiredDraft[key])).subscribe({next: () => {this.loadRegistrationFields(); this.notify('Required fields saved');}, error: error => this.message = this.apiErrorMessage(error, 'Could not save requirements.')});
+  }
+  fieldRequired(key: string): boolean { return this.requiredFields.includes(key); }
+  editingPatientId = '';
+  occupancy: {id: string; name: string; room: string; occupied: boolean}[] = [];
+  occupancyError = '';
+  doctorDraft = {id: '', name: '', department: 'Radiology', designation: 'Radiographer', room_number: '', waiting_room_id: '', token_prefix: 'MRI'};
+  doctorEditId = '';
+  openDoctorEditor(doctor?: Doctor): void {
+    this.doctorEditId = doctor?.id || '';
+    this.doctorDraft = {id: crypto.randomUUID(), name: doctor?.name || '', department: doctor?.department || 'Radiology', designation: 'Radiographer', room_number: doctor?.room || '', waiting_room_id: this.waitingRooms.find(room => room.code === doctor?.waitingRoom)?.id || this.waitingRooms[0]?.id || '', token_prefix: 'MRI'};
+    this.editor = 'radiographer';
+  }
+  reloadDoctors(): void {
+    this.api.listDoctors().subscribe({next: doctors => { this.doctors = doctors; this.setDoctorRoomDrafts(); if (!doctors.some(d => d.id === this.selectedDoctorId)) this.selectedDoctorId = doctors[0]?.id || ''; }, error: error => this.message = this.apiErrorMessage(error, 'Could not load radiographers.')});
+  }
+  saveRadiographer(): void {
+    const request = this.doctorEditId ? this.api.updateDoctor(this.doctorEditId, {name: this.doctorDraft.name.trim()}) : this.api.createDoctor({...this.doctorDraft, name: this.doctorDraft.name.trim()});
+    request.subscribe({next: () => { this.editor = ''; this.reloadDoctors(); this.notify('Radiographer saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save radiographer.')});
+  }
+  removeRadiographer(doctor: Doctor): void {
+    this.api.removeDoctor(doctor.id).subscribe({next: () => {this.reloadDoctors(); this.notify('Radiographer removed; historical records retained');}, error: error => this.message = this.apiErrorMessage(error, 'Could not remove radiographer.')});
+  }
+  editWaitingPatient(token: QueueToken): void {
+    this.loadRegistrationFields();
+    this.editingPatientId = token.id;
+    for (const key of Object.keys(this.form) as (keyof typeof this.form)[]) {
+      (this.form as any)[key] = (token as any)[key] ?? (['age', 'contrast', 'film'].includes(key) ? null : '');
+    }
+    this.registrationSerial = token.serial_number || token.token_number;
+    this.registrationServerDate = token.token_date || token.created_at.slice(0, 10);
+    this.message = ''; this.showReceptionModal = true;
+  }
   openRegistration(): void {
+    this.loadRegistrationFields();
+    if (this.editingPatientId) {
+      for (const key of Object.keys(this.form)) (this.form as any)[key] = ['age', 'contrast', 'film'].includes(key) ? null : '';
+      this.form.service_category = 'civilian'; this.form.priority = 'normal';
+    }
+    this.editingPatientId = '';
     this.loadLookups();
     this.message = '';
     this.showReceptionModal = true;
@@ -566,7 +613,7 @@ export class AppComponent implements OnDestroy {
   get missingTokenFields(): string[] {
     const missing: string[] = [];
     if (this.form.patient_name.trim().length < 2) missing.push('patient name');
-    if (!this.form.patient_source) missing.push('patient source');
+    for (const key of this.requiredFields) { const value = (this.form as any)[key]; if (value === null || value === undefined || String(value).trim() === '') missing.push(this.registrationFields[key] || key); }
     if ([this.form.age, this.form.contrast, this.form.film].some(value => value !== null && (!Number.isInteger(value) || value < 0)) || (this.form.age !== null && this.form.age > 150)) missing.push('valid age, contrast and film numbers');
     return missing;
   }
@@ -659,7 +706,7 @@ export class AppComponent implements OnDestroy {
     }
     if (this.missingTokenFields.length) return;
     this.busy = true;
-    this.api.createToken({
+    const payload = {
       ...this.form,
       patient_title: this.form.patient_title || '',
       patient_name: patientName,
@@ -672,9 +719,11 @@ export class AppComponent implements OnDestroy {
       room_number: '',
       waiting_room: '',
       source: 'walk_in',
-    }).subscribe({
+    };
+    const request = this.editingPatientId ? this.api.updateWaitingPatient(this.editingPatientId, payload) : this.api.createToken(payload);
+    request.subscribe({
       next: (token) => {
-        this.notify(`Patient added · ${token.serial_number || token.token_number}`);
+        this.notify(`Patient ${this.editingPatientId ? 'updated' : 'added'} · ${token.serial_number || token.token_number}`);
         this.form.beneficiary_type = this.form.service_status = this.form.entitlement = this.form.sponsor_rank = this.form.family_relationship = this.sponsorSearch = '';
         this.form.priority = 'normal';
         this.form.patient_name = '';
@@ -906,9 +955,10 @@ export class AppComponent implements OnDestroy {
   }
 
   loadSettings(): void {
+    this.loadRegistrationFields();
     if (this.hasPermission('settings.manage')) {
       this.api.settings().subscribe((settings) => {
-        this.settings = settings.map((setting) => setting.key === 'announcement' ? {
+        this.settings = settings.filter(setting => setting.key !== 'registration_fields').map((setting) => setting.key === 'announcement' ? {
           ...setting,
           value: { voice_mode: 'auto', cache_max_files: 40, ...setting.value },
         } : setting);
@@ -1083,6 +1133,7 @@ export class AppComponent implements OnDestroy {
       return;
     }
     if (this.view !== 'reception' && this.view !== 'doctor') { this.isRefreshing = false; return; }
+    if (this.view === 'doctor' && this.hasPermission('queue.view')) this.api.radiographerStatus().subscribe({next: rows => { this.occupancy = rows; this.occupancyError = ''; }, error: () => { this.occupancy = []; this.occupancyError = 'Could not load radiographer status.'; }});
     if (this.view === 'doctor' && !this.doctorOpened) { this.isRefreshing = false; return; }
     if (!this.selectedDoctorId && this.view !== 'reception') {
       this.tokens = [];

@@ -797,6 +797,57 @@ def update_doctor(
     return doctor
 
 
+@app.delete("/api/v1/admin/doctors/{doctor_id}", status_code=204)
+def remove_doctor(doctor_id: str, user: User = Depends(require_permission("directory.manage")), db: Session = Depends(get_db)):
+    doctor = db.scalar(select(Doctor).where(Doctor.id == doctor_id).with_for_update())
+    if not doctor:
+        raise HTTPException(404, "Radiographer not found")
+    if db.scalar(select(User).where(User.doctor_id == doctor_id, User.is_active.is_(True))):
+        raise HTTPException(409, "Reassign or disable this radiographer's user accounts first")
+    if db.scalar(select(QueueToken).where(QueueToken.doctor_id == doctor_id, QueueToken.status.in_(["waiting", "called", "recalled", "in_progress"]))):
+        raise HTTPException(409, "Finish or transfer this radiographer's active patients first")
+    if db.scalar(select(Appointment).where(Appointment.doctor_id == doctor_id, Appointment.status.in_(["scheduled", "confirmed"]))):
+        raise HTTPException(409, "Reschedule or cancel this radiographer's pending appointments first")
+    doctor.is_active = False
+    db.add(AuditEvent(action="doctor.removed", actor=user.username, detail={"doctor_id": doctor_id}))
+    db.commit()
+
+
+@app.get("/api/v1/radiographers/status")
+def radiographer_status(user: User = Depends(require_permission("queue.view")), db: Session = Depends(get_db)):
+    doctors = db.scalars(select(Doctor).where(Doctor.is_active.is_(True)).order_by(Doctor.name)).all()
+    active = db.scalars(select(QueueToken).where(QueueToken.status.in_(["called", "recalled", "in_progress"]))).all()
+    return [{"id": doctor.id, "name": doctor.name, "room": doctor.room_number,
+             "occupied": any(token.doctor_id == doctor.id for token in active)} for doctor in doctors]
+
+
+@app.patch("/api/v1/tokens/{token_id}", response_model=TokenRead)
+def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depends(require_permission("queue.serial.create")), db: Session = Depends(get_db)):
+    token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
+    if not token:
+        raise HTTPException(404, "Patient not found")
+    if token.status != "waiting":
+        raise HTTPException(409, "Only waiting patients can be edited; refresh the queue")
+    from .registration import validate_registration
+    validate_registration(db, payload)
+    service = QueueService(db)
+    for category, value in [("service_category", payload.service_category), ("priority_category", payload.priority), ("rank_relationship", payload.rank), ("patient_source", payload.patient_source)]:
+        if value:
+            option = service._require_lookup(category, value)
+            if category == "rank_relationship" and ((option.metadata_json or {}).get("priority") == "vip" or value.lower() == "vip"):
+                payload.priority = "vip"
+    from .monthly_report import classify
+    fields = {"patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "beneficiary_type", "service_status", "entitlement", "sponsor_rank", "family_relationship"}
+    changes = {key: value for key, value in payload.model_dump().items() if key in fields}
+    changes["summary_category"] = classify(db, payload)
+    before = {key: getattr(token, key) for key in changes}
+    for key, value in changes.items():
+        setattr(token, key, value)
+    db.add(AuditEvent(action="token.edited", actor=user.username, token_id=token.id, detail={"before": before, "after": changes}))
+    db.commit()
+    return service._read(token)
+
+
 @app.get("/api/v1/holidays", response_model=list[HolidayRead])
 def holidays(_: User = Depends(require_permission("holidays.view")), db: Session = Depends(get_db)):
     return list(db.scalars(select(Holiday).where(Holiday.is_active.is_(True)).order_by(Holiday.holiday_date)))
@@ -1333,6 +1384,28 @@ def dashboard(user: User = Depends(require_permission("dashboard.view")), db: Se
     )
 
 
+@app.get("/api/v1/registration-fields")
+def registration_fields(_user: User = Depends(current_user), db: Session = Depends(get_db)):
+    from .registration import requirements
+    return requirements(db)
+
+
+@app.put("/api/v1/registration-fields")
+def save_registration_fields(payload: SettingUpdate, user: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)):
+    from .registration import FIELDS, requirements
+    required = payload.value.get("required")
+    if not isinstance(required, list) or any(not isinstance(key, str) or key not in FIELDS for key in required) or "patient_name" not in required:
+        raise HTTPException(422, "Select supported fields; patient name must remain required")
+    setting = db.get(AppSetting, "registration_fields")
+    if not setting:
+        setting = AppSetting(key="registration_fields", description="Mandatory patient registration fields", value={})
+        db.add(setting)
+    setting.value = {"required": sorted(set(required))}
+    db.add(AuditEvent(action="registration_fields.updated", actor=user.username, detail=setting.value))
+    db.commit()
+    return requirements(db)
+
+
 @app.get("/api/v1/settings")
 def settings(_: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)):
     return list(db.scalars(select(AppSetting).order_by(AppSetting.key)))
@@ -1342,6 +1415,8 @@ def settings(_: User = Depends(require_permission("settings.manage")), db: Sessi
 def update_setting(
     key: str, payload: SettingUpdate, _: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)
 ):
+    if key == "registration_fields":
+        raise HTTPException(422, "Use registration-fields to update mandatory fields")
     setting = db.get(AppSetting, key)
     if not setting:
         raise HTTPException(404, "Setting not found")

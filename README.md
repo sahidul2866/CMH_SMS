@@ -205,5 +205,14 @@ documented restore drill are still required for the approved RPO/RTO.
 - Select a radiographer to open the shared waiting list. Any radiographer can call a waiting patient from any waiting area. Calling records the responsible radiographer and their configured room; another radiographer cannot call or start that patient while they are being handled.
 - VIPs appear first and use **Call physically**, which starts service without a PA announcement. Cancel actions require a reason.
 - **Settings → Dropdown options** manages patient sources (OPD, IPD/ward, referral and custom options), military designations, priorities and room choices. Designations can be marked as VIP. Honorifics such as Mr./Mrs. are not part of reception registration.
-- **Settings → Rooms & devices** configures radiographer rooms and consoles; **Console settings** configures queue, display and audio behavior. Saved settings and dropdown edits survive startup seeding.
+- **Settings → Console settings** configures radiographer rooms, devices, queue, display and audio behavior. Saved settings and dropdown edits survive startup seeding.
 - Dashboard number buttons open patient details. **Reception Report → Today’s report** exports today's MRI register to Excel; PDF and date-range filters are also available. Modal forms support Tab, Shift+Tab, Enter and Escape.
+
+### Reception and radiographer improvements
+
+- **Settings → Radiographers** lets directory administrators add radiographers, edit names and remove them from the active directory. Removal preserves historical records and requires staff accounts, active patients and pending appointments to be resolved first.
+- **Radiographers → Radiographer availability** shows every active radiographer’s room and occupied/available state, refreshing every two seconds. Called, recalled and in-service patients count as occupied. Queue actions remain restricted to the signed-in radiographer’s assignment.
+- **Reception → Waiting patients → Edit** updates registration details while preserving the serial, date and queue assignment. The server rejects an edit if the patient has already been called.
+- **Reception Report → MRI summary** accepts inclusive from/to dates, including ranges across months (up to 367 days). Drill-downs and Excel/PDF exports use the loaded report’s range and counting basis. Existing API clients can continue using `month=YYYY-MM`.
+- **Settings → Console settings → Required patient fields** controls mandatory registration fields. Name always remains mandatory; additional requirements apply to creation and waiting-patient edits and are enforced by the server. An asterisk marks required fields. Existing records are preserved.
+- Role integration tests use isolated test accounts for admin, radiographer, a custom `head_of_dept` role, reception, auditor and display; they do not change deployed user accounts.

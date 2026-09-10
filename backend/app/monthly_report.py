@@ -1,7 +1,6 @@
 """MRI patient-state report. Categories are snapshots, never inferred for legacy rows."""
 from __future__ import annotations
 
-import calendar
 from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO
 from typing import Literal
@@ -90,12 +89,28 @@ def classify(db: Session, payload) -> str | None:
     return {'officer': 'serving_officer', 'cadet': 'serving_cadet', 'jco': 'serving_jco_or', 'or': 'serving_jco_or', 'nce': 'serving_nce'}.get(group)
 
 
-def month_rows(db, month, basis):
+def month_rows(db, month, basis, date_from=None, date_to=None):
+    if date_from is not None or date_to is not None:
+        if not date_from or not date_to or date_from > date_to or date_to == date.max:
+            raise HTTPException(422, "Provide a valid from/to date range")
+        if (date_to - date_from).days > 366:
+            raise HTTPException(422, "Select a range of at most 367 days")
+        start, end = date_from, date_to + timedelta(days=1)
+    else:
+        start, end = month_bounds(month)
+    return range_rows(db, start, end, basis)
+
+
+def month_bounds(month):
     try:
-        start = date.fromisoformat(month + '-01')
-    except ValueError:
-        raise HTTPException(422, 'Month must use YYYY-MM')
-    end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        start = date.fromisoformat((month or '') + '-01')
+        end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    except (ValueError, OverflowError):
+        raise HTTPException(422, 'Month must use YYYY-MM and precede December 9999')
+    return start, end
+
+
+def range_rows(db, start, end, basis):
     stmt = select(QueueToken)
     if basis == 'completed':
         zone = ZoneInfo('Asia/Dhaka')
@@ -114,8 +129,8 @@ def record_day(token, basis):
     return token.token_date
 
 
-def summary(db, month, basis):
-    start, end, records = month_rows(db, month, basis)
+def summary(db, month, basis, date_from=None, date_to=None):
+    start, end, records = month_rows(db, month, basis, date_from, date_to)
     keys = [c[0] for c in COLUMNS] + ['unclassified']
     days = { (start + timedelta(days=i)).isoformat(): dict.fromkeys(keys, 0) for i in range((end-start).days)}
     for token in records:
@@ -123,17 +138,17 @@ def summary(db, month, basis):
         days[record_day(token, basis).isoformat()][key] += 1
     rows = [{'date': day, 'counts': counts, 'total': sum(counts.values())} for day, counts in days.items()]
     totals = {key: sum(row['counts'][key] for row in rows) for key in keys}
-    return {'month': month, 'basis': basis, 'columns': [{'key': key, 'group': group, 'label': label} for key, group, label in COLUMNS], 'rows': rows, 'totals': totals, 'total': len(records)}
+    return {'date_from': start.isoformat(), 'date_to': (end - timedelta(days=1)).isoformat(), 'month': month, 'basis': basis, 'columns': [{'key': key, 'group': group, 'label': label} for key, group, label in COLUMNS], 'rows': rows, 'totals': totals, 'total': len(records)}
 
 
 @router.get('/reports/mri-summary')
-def get_summary(month: str = Query(pattern=r'^\d{4}-\d{2}$'), basis: Literal['registrations', 'completed'] = 'registrations', db: Session = Depends(get_db), _user: User = Depends(require_permission('reports.view'))):
-    return summary(db, month, basis)
+def get_summary(month: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}$'), date_from: date | None = None, date_to: date | None = None, basis: Literal['registrations', 'completed'] = 'registrations', db: Session = Depends(get_db), _user: User = Depends(require_permission('reports.view'))):
+    return summary(db, month, basis, date_from, date_to)
 
 
 @router.get('/reports/mri-summary/patients', response_model=list[TokenRead])
-def summary_patients(month: str = Query(pattern=r'^\d{4}-\d{2}$'), basis: Literal['registrations', 'completed'] = 'registrations', day: date | None = None, category: str | None = None, db: Session = Depends(get_db), _user: User = Depends(require_permission('reports.view'))):
-    _, _, records = month_rows(db, month, basis)
+def summary_patients(month: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}$'), date_from: date | None = None, date_to: date | None = None, basis: Literal['registrations', 'completed'] = 'registrations', day: date | None = None, category: str | None = None, db: Session = Depends(get_db), _user: User = Depends(require_permission('reports.view'))):
+    _, _, records = month_rows(db, month, basis, date_from, date_to)
     keys = {c[0] for c in COLUMNS}
     return [token for token in records if (not day or record_day(token, basis) == day) and (not category or (token.summary_category if token.summary_category in keys else 'unclassified') == category)]
 
@@ -159,13 +174,14 @@ def correct_classification(token_id: str, payload: ClassificationCorrection, db:
 
 
 @router.get('/reports/mri-summary.{format}')
-def export_summary(format: Literal['xlsx', 'pdf'], month: str = Query(pattern=r'^\d{4}-\d{2}$'), basis: Literal['registrations', 'completed'] = 'registrations', db: Session = Depends(get_db), _user: User = Depends(require_permission('reports.view'))):
-    report = summary(db, month, basis)
+def export_summary(format: Literal['xlsx', 'pdf'], month: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}$'), date_from: date | None = None, date_to: date | None = None, basis: Literal['registrations', 'completed'] = 'registrations', db: Session = Depends(get_db), _user: User = Depends(require_permission('reports.view'))):
+    report = summary(db, month, basis, date_from, date_to)
     keys = [c[0] for c in COLUMNS]
     review = report['totals']['unclassified'] > 0
     if review:
         keys += ['unclassified']
-    title = f'PATIENT STATE {calendar.month_abbr[int(month[5:])].upper()} {month[:4]}'
+    period = f"{report['date_from']} to {report['date_to']}"
+    title = f'PATIENT STATE {period}'
     note = ('Registrations (including cancelled registrations)' if basis == 'registrations' else 'Completed MRIs by completion date (Asia/Dhaka)')
     if review:
         note += ' | Needs review: included in total, pending classification'
@@ -207,7 +223,8 @@ def export_summary(format: Literal['xlsx', 'pdf'], month: str = Query(pattern=r'
         sheet.sheet_properties.pageSetUpPr.fitToPage = True
         sheet.page_setup.orientation = 'landscape'
         sheet.page_setup.paperSize = sheet.PAPERSIZE_A4
-        sheet.page_setup.fitToWidth = sheet.page_setup.fitToHeight = 1
+        sheet.page_setup.fitToWidth = 1
+        sheet.page_setup.fitToHeight = 0
         sheet.print_title_rows = '1:7'
         book.save(out)
         media = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -225,4 +242,4 @@ def export_summary(format: Literal['xlsx', 'pdf'], month: str = Query(pattern=r'
         table.setStyle(TableStyle(commands))
         SimpleDocTemplate(out, pagesize=landscape(A4), leftMargin=25, rightMargin=25, topMargin=15, bottomMargin=15).build([Paragraph('DEPARTMENT OF RADIOLOGY & IMAGING<br/>CMH DHAKA<br/>' + title + '<br/>MRI CENTRE', styles['Normal']), Paragraph(note, styles['Normal']), table])
         media = 'application/pdf'
-    return Response(out.getvalue(), media_type=media, headers={'Content-Disposition': f'attachment; filename="mri-summary-{month}-{basis}.{format}"'})
+    return Response(out.getvalue(), media_type=media, headers={'Content-Disposition': f'attachment; filename="mri-summary-{period}-{basis}.{format}"'})

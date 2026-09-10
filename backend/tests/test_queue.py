@@ -1409,3 +1409,91 @@ def test_summary_completion_dates_use_dhaka_and_invalid_inputs():
     assert client.get('/api/v1/reports/mri-summary', params={'month': '2026-06', 'basis': 'anything'}).status_code == 422
     invalid = client.post('/api/v1/tokens', json={**token_payload(), 'rank': '', 'beneficiary_type': 'family', 'entitlement': 'military', 'family_relationship': 'spouse'})
     assert invalid.status_code == 422
+
+
+def test_date_range_summary_drilldown_and_exports():
+    from app.database import SessionLocal
+    ids = [client.post('/api/v1/tokens', json=token_payload(f'Patient {i}')).json()['id'] for i in range(3)]
+    with SessionLocal() as db:
+        for token_id, day in zip(ids, [date(2026, 1, 31), date(2026, 2, 1), date(2026, 2, 2)]):
+            db.get(QueueToken, token_id).token_date = day
+        db.commit()
+    query = {'date_from': '2026-01-31', 'date_to': '2026-02-01'}
+    report = client.get('/api/v1/reports/mri-summary', params=query)
+    assert report.status_code == 200, report.text
+    assert report.json()['total'] == 2
+    assert len(report.json()['rows']) == 2
+    patients = client.get('/api/v1/reports/mri-summary/patients', params=query).json()
+    assert {p['id'] for p in patients} == set(ids[:2])
+    sheet = load_workbook(BytesIO(client.get('/api/v1/reports/mri-summary.xlsx', params=query).content)).active
+    assert '2026-01-31 to 2026-02-01' in sheet['A3'].value
+    assert sheet.cell(sheet.max_row, sheet.max_column).value == 2
+    assert client.get('/api/v1/reports/mri-summary.pdf', params=query).content.startswith(b'%PDF')
+    for bad in [{'date_from': '2026-02-02', 'date_to': '2026-02-01'}, {'date_from': '2026-01-01'}, {'date_from': '2020-01-01', 'date_to': '2026-01-01'}]:
+        assert client.get('/api/v1/reports/mri-summary', params=bad).status_code == 422
+
+
+def test_waiting_patient_edit_and_required_fields():
+    token = client.post('/api/v1/tokens', json=token_payload()).json()
+    assert client.put('/api/v1/registration-fields', json={'value': {'required': ['patient_name', 'age', 'mri_area']}}).status_code == 200
+    assert client.post('/api/v1/tokens', json=token_payload()).status_code == 422
+    assert client.patch(f"/api/v1/tokens/{token['id']}", json=token_payload()).status_code == 422
+    payload = {**token_payload('Corrected Name'), 'age': 0, 'mri_area': 'Brain', 'doctor_id': 'fake', 'room_number': 'fake'}
+    edited = client.patch(f"/api/v1/tokens/{token['id']}", json=payload)
+    assert edited.status_code == 200, edited.text
+    assert edited.json()['patient_name'] == 'Corrected Name'
+    for field in ['serial_number', 'token_number', 'doctor_id', 'room_number', 'token_date']:
+        assert edited.json()[field] == token[field]
+    assert client.put('/api/v1/registration-fields', json={'value': {'required': ['status']}}).status_code == 422
+    assert client.put('/api/v1/settings/registration_fields', json={'value': {'required': []}}).status_code == 422
+    client.post(f"/api/v1/doctors/dr-khan/tokens/{token['id']}/call").raise_for_status()
+    assert client.patch(f"/api/v1/tokens/{token['id']}", json=payload).status_code == 409
+
+
+def test_radiographer_management_and_role_logins():
+    from app.database import SessionLocal
+    new_doctor = {'id': 'second-radio', 'name': 'Second Radiographer', 'department': 'MRI', 'designation': 'Radiographer', 'room_number': '206', 'waiting_room_id': 'waiting-room-1', 'token_prefix': 'SR'}
+    assert client.post('/api/v1/admin/doctors', json=new_doctor).status_code == 201
+    assert client.patch('/api/v1/admin/doctors/second-radio', json={'name': 'Updated Name'}).status_code == 200
+    token = client.post('/api/v1/tokens', json=token_payload()).json()
+    client.post(f"/api/v1/doctors/dr-khan/tokens/{token['id']}/call").raise_for_status()
+    assert client.delete('/api/v1/admin/doctors/dr-khan').status_code == 409
+    with SessionLocal() as db:
+        db.add(RoleDefinition(name='head_of_dept', display_name='Head of department', access_profile='auditor', permissions=['pages.dashboard', 'pages.radiographer', 'pages.reports', 'dashboard.view', 'directory.view', 'queue.view', 'reports.view']))
+        for role in ['radiographer', 'head_of_dept', 'reception', 'auditor', 'display']:
+            db.add(User(username=role, full_name=role, password_hash=hash_password('RoleTestPass123!'), role=role, doctor_id='second-radio' if role == 'radiographer' else None, is_active=True))
+        db.commit()
+    for role in ['radiographer', 'head_of_dept', 'reception', 'auditor', 'display']:
+        client.cookies.clear()
+        login = client.post('/api/v1/auth/login', json={'username': role, 'password': 'RoleTestPass123!'})
+        assert login.status_code == 200, login.text
+        assert client.get('/api/v1/auth/session').json()['role'] == role
+        occupancy = client.get('/api/v1/radiographers/status')
+        assert occupancy.status_code == (200 if role in ['radiographer', 'head_of_dept', 'reception'] else 403)
+        if occupancy.status_code == 200:
+            rows = {row['id']: row for row in occupancy.json()}
+            assert rows['dr-khan']['occupied'] is True
+            assert rows['second-radio']['occupied'] is False
+            assert set(rows['dr-khan']) == {'id', 'name', 'room', 'occupied'}
+        assert client.post('/api/v1/admin/doctors', json={**new_doctor, 'id': 'unauthorized'}).status_code == 403
+        assert client.delete('/api/v1/admin/doctors/second-radio').status_code == 403
+        assert client.put('/api/v1/registration-fields', json={'value': {'required': ['patient_name']}}).status_code == 403
+        assert client.get('/api/v1/reports/mri-summary', params={'date_from': date.today().isoformat(), 'date_to': date.today().isoformat()}).status_code == (200 if role in ['head_of_dept', 'auditor'] else 403)
+        if role == 'reception':
+            waiting = client.post('/api/v1/tokens', json=token_payload()).json()
+            assert client.patch(f"/api/v1/tokens/{waiting['id']}", json=token_payload('Reception correction')).status_code == 200
+        if role != 'reception':
+            assert client.patch(f"/api/v1/tokens/{token['id']}", json=token_payload()).status_code == 403
+        if role == 'radiographer':
+            assert client.post('/api/v1/doctors/dr-khan/call-next').status_code == 403
+    client.cookies.clear()
+    client.post('/api/v1/auth/login', json={'username': 'admin', 'password': 'AdminPass123!'}).raise_for_status()
+    assert client.delete('/api/v1/admin/doctors/second-radio').status_code == 409
+    with SessionLocal() as db:
+        db.scalar(select(User).where(User.username == 'radiographer')).is_active = False
+        db.commit()
+    assert client.delete('/api/v1/admin/doctors/second-radio').status_code == 204
+    assert 'second-radio' not in {row['id'] for row in client.get('/api/v1/doctors').json()}
+    with SessionLocal() as db:
+        assert db.get(Doctor, 'second-radio').is_active is False
+        assert db.get(QueueToken, token['id']).patient_name == token['patient_name']

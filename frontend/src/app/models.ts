@@ -44,13 +44,15 @@ export interface PatientClassification {
 }
 
 export interface MonthlySummary {
-  month: string; basis: string;
+  date_from: string; date_to: string;
+  month: string | null; basis: string;
   columns: {key: string; group: string; label: string}[];
   rows: {date: string; counts: Record<string, number>; total: number}[];
   totals: Record<string, number>; total: number;
 }
 
 export interface QueueToken extends PatientClassification {
+  token_date?: string;
   summary_category?: string | null;
   id: string;
   token_number: string;
