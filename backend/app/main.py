@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 import hashlib
 import json
 import logging
@@ -148,6 +150,7 @@ def serialize_user(user: User, db: Session) -> dict:
         "role": user.role, "access_profile": role.access_profile if role else user.role,
         "permissions": role.permissions if role else ([] if user.role != "admin" else ["*"]),
         "doctor_id": user.doctor_id, "is_active": user.is_active,
+        "must_change_password": user.must_change_password,
     }
 
 
@@ -438,6 +441,7 @@ def change_password(
     if payload.current_password == payload.new_password:
         raise HTTPException(400, "New password must be different")
     user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False
     current_session_id = hashlib.sha256((request.cookies.get(SESSION_COOKIE) or "").encode()).hexdigest()
     db.execute(
         delete(UserSession).where(
@@ -565,6 +569,7 @@ def create_user(payload: UserCreate, _: User = Depends(require_permission("users
         username=username,
         full_name=payload.full_name,
         password_hash=hash_password(payload.password),
+        must_change_password=True,
         role=payload.role,
         doctor_id=payload.doctor_id,
         is_active=True,
@@ -593,6 +598,9 @@ def update_user(
         if not has_permission(administrator, db, "users.password.reset"):
             raise HTTPException(403, "Password reset permission required")
         user.password_hash = hash_password(password)
+        user.must_change_password = True
+        db.execute(delete(UserSession).where(UserSession.user_id == user.id))
+        db.add(AuditEvent(action="auth.password_reset", actor=administrator.username, detail={"user": user.username}))
     assignment_fields = {"role", "doctor_id"} & values.keys()
     general_fields = set(values) - assignment_fields
     if assignment_fields and not has_permission(administrator, db, "users.roles.assign"):
@@ -624,6 +632,7 @@ def reset_user_password(
     if not user:
         raise HTTPException(404, "User not found")
     user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = True
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     db.add(AuditEvent(action="auth.password_reset", actor=administrator.username, detail={"user": user.username}))
     db.commit()
@@ -1240,7 +1249,8 @@ async def waiting_room_realtime(websocket: WebSocket, waiting_room: str):
 
 @app.get("/api/v1/dashboard/patients", response_model=list[TokenRead])
 def dashboard_patients(
-    status: str = "all", user: User = Depends(require_permission("dashboard.view")), db: Session = Depends(get_db)
+    status: str = "all", priority: Literal["all", "vip", "non_vip"] = "all",
+    user: User = Depends(require_permission("dashboard.view")), db: Session = Depends(get_db)
 ):
     if status not in {"all", "waiting", "called", "in_progress", "completed", "vip", "wait"}:
         raise HTTPException(422, "Unknown dashboard detail")
@@ -1248,6 +1258,8 @@ def dashboard_patients(
     if user_access_profile(user, db) == "radiographer" and not doctor_id:
         return []
     tokens = QueueService(db).list_tokens(doctor_id=doctor_id, shared_waiting=bool(doctor_id))
+    if priority != "all":
+        tokens = [token for token in tokens if (token.priority == "vip") == (priority == "vip")]
     if status in {"all", "wait"}:
         return tokens
     if status == "vip":
@@ -1278,7 +1290,7 @@ async def claim_patient(
 
 
 @app.get("/api/v1/dashboard", response_model=DashboardRead)
-def dashboard(user: User = Depends(require_permission("dashboard.view")), db: Session = Depends(get_db)):
+def dashboard(priority: Literal["all", "vip", "non_vip"] = "all", user: User = Depends(require_permission("dashboard.view")), db: Session = Depends(get_db)):
     today = date.today()
     assigned_only = user_access_profile(user, db) == "radiographer"
     doctor_stmt = (
@@ -1293,6 +1305,10 @@ def dashboard(user: User = Depends(require_permission("dashboard.view")), db: Se
     token_stmt = select(QueueToken).where(QueueToken.token_date == today)
     if assigned_only:
         token_stmt = token_stmt.where(or_(QueueToken.doctor_id == user.doctor_id, QueueToken.status == "waiting"))
+    if priority == "vip":
+        token_stmt = token_stmt.where(QueueToken.priority == "vip")
+    elif priority == "non_vip":
+        token_stmt = token_stmt.where(QueueToken.priority != "vip")
     tokens = list(db.scalars(token_stmt)) if doctor_ids or not assigned_only else []
 
     def metrics(items: list[QueueToken]) -> tuple[dict[str, int], int]:
@@ -1408,15 +1424,15 @@ def save_registration_fields(payload: SettingUpdate, user: User = Depends(requir
 
 @app.get("/api/v1/settings")
 def settings(_: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)):
-    return list(db.scalars(select(AppSetting).order_by(AppSetting.key)))
+    return list(db.scalars(select(AppSetting).where(AppSetting.key.in_(["display", "queue", "announcement", "registration_fields"])).order_by(AppSetting.key)))
 
 
 @app.put("/api/v1/settings/{key}")
 def update_setting(
     key: str, payload: SettingUpdate, _: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)
 ):
-    if key == "registration_fields":
-        raise HTTPException(422, "Use registration-fields to update mandatory fields")
+    if key in {"registration_fields", "mri_summary_mapping"}:
+        raise HTTPException(422, "Use the dedicated settings endpoint")
     setting = db.get(AppSetting, key)
     if not setting:
         raise HTTPException(404, "Setting not found")

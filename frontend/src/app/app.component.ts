@@ -1,11 +1,12 @@
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Subscription, interval } from 'rxjs';
+import { Observable, Subscription, finalize, interval } from 'rxjs';
 
 import { MonthlySummary, PatientClassification, AppSetting, Appointment, AuditEvent, AuthUser, DashboardRoom, DeviceEndpoint, DisplayState, Doctor, Holiday, LookupOption, Patient, PermissionDefinition, QueueReport, QueueToken, RadiographyDashboard, RealtimeStatus, ReceptionReportRow, RoleDefinition, ScheduleSlot, SmsMessage, View, WaitingRoom } from './models';
 import { QueueApiService } from './queue-api.service';
 import { ModalComponent } from './modal.component';
+import { SearchableSelectComponent } from './searchable-select.component';
 import { RealtimeService } from './realtime.service';
 
 const EMPTY_DOCTOR: Doctor = { id: '', name: 'No radiographer configured', department: '—', room: '—', waitingRoom: '' };
@@ -15,7 +16,7 @@ const YEAR_START_LOCAL = `${TODAY_LOCAL.slice(0, 4)}-01-01`;
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, FormsModule, ModalComponent],
+  imports: [CommonModule, FormsModule, ModalComponent, SearchableSelectComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss',
 })
@@ -37,6 +38,8 @@ export class AppComponent implements OnDestroy {
   doctorOpened = false;
   previousView: View = 'dashboard';
   dashboardDetail = '';
+  dashboardPriority: 'all' | 'vip' | 'non_vip' = 'all';
+  dashboardLoading = false;
   dashboardPatients: QueueToken[] = [];
   selectedWaitRoom = '';
   detailLoading = false;
@@ -79,7 +82,6 @@ export class AppComponent implements OnDestroy {
   classificationDraft: PatientClassification = {};
   classificationSaving = false;
   classificationError = '';
-  sponsorSearch = '';
   lookupReportGroup = '';
   lookupReportCode = '';
   reportGroups = [{value: 'officer', label: 'Officers / AFNS'}, {value: 'cadet', label: 'Officer / Nursing cadet'}, {value: 'jco', label: 'JCO'}, {value: 'or', label: 'OR / Recruit'}, {value: 'nce', label: 'NCE'}];
@@ -98,10 +100,6 @@ export class AppComponent implements OnDestroy {
       draft.sponsor_rank = ''; draft.family_relationship = '';
     } else { draft.rank = ''; }
     if (this.classificationCode('entitlement', draft.entitlement) !== 'military') { draft.service_status = ''; draft.sponsor_rank = ''; }
-  }
-  sponsorRanks(selected: string | null | undefined): LookupOption[] {
-    const search = this.sponsorSearch.toLowerCase();
-    return this.lookup('rank_relationship').filter(item => item.value === selected || item.label.toLowerCase().includes(search));
   }
   loadMonthlySummary(): void {
     this.summaryLoading = true; this.monthlySummary = null; this.summaryPatients = null;
@@ -128,7 +126,7 @@ export class AppComponent implements OnDestroy {
     });
   }
   editClassification(patient: QueueToken): void {
-    this.patientDetail = null; this.classificationTarget = patient; this.classificationError = ''; this.sponsorSearch = '';
+    this.patientDetail = null; this.classificationTarget = patient; this.classificationError = '';
     this.classificationDraft = {rank: patient.rank || '', beneficiary_type: patient.beneficiary_type || '', service_status: patient.service_status || '', entitlement: patient.entitlement || '', sponsor_rank: patient.sponsor_rank || '', family_relationship: patient.family_relationship || ''};
   }
   saveClassification(): void {
@@ -145,7 +143,7 @@ export class AppComponent implements OnDestroy {
   reportExporting = false;
   reportPdfExporting = false;
   settings: AppSetting[] = [];
-  settingsTab: 'general' | 'account' | 'users' | 'roles' | 'master-data' | 'operations' | 'radiographers' = 'general';
+  settingsTab: 'general' | 'account' | 'users' | 'roles' | 'master-data' | 'operations' | 'radiographers' | 'summary-mapping' = 'general';
   passwordForm = { current: '', next: '', confirm: '' };
   passwordBusy = false;
   audioTestBusy = false;
@@ -173,6 +171,62 @@ export class AppComponent implements OnDestroy {
   form = { beneficiary_type: '', service_status: '', entitlement: '', sponsor_rank: '', family_relationship: '', patient_title: '', patient_name: '', patient_phone: '', service_category: 'civilian', rank: '', service_number: '', priority: 'normal', age: null as number | null, unit: '', mri_area: '', contrast: null as number | null, film: null as number | null, report: '', patient_source: '' };
   registrationSerial = '';
   registrationServerDate = '';
+  userSettingsSearch = '';
+  userSettingsStatus = 'all';
+  roleSettingsSearch = '';
+  doctorSettingsSearch = '';
+  lookupSettingsSearch = '';
+  lookupSettingsStatus = 'all';
+  settingsSaving = false;
+  requiredFieldsBusy = false;
+  private settingsMatches(query: string, ...values: string[]): boolean {
+    return values.join(' ').toLowerCase().includes(query.trim().toLowerCase());
+  }
+  get settingsUsers() {
+    return this.users.filter(user => this.settingsMatches(this.userSettingsSearch, user.full_name, user.username, user.role)
+      && (this.userSettingsStatus === 'all' || user.is_active === (this.userSettingsStatus === 'active')));
+  }
+  get settingsRoles() {
+    return this.roles.filter(role => this.settingsMatches(this.roleSettingsSearch, role.display_name, role.name, role.access_profile));
+  }
+  get settingsDoctors() {
+    return this.doctors.filter(doctor => this.settingsMatches(this.doctorSettingsSearch, doctor.name, doctor.department, doctor.room));
+  }
+  get settingsLookupOptions() {
+    return this.lookup(this.selectedLookupCategory, false).filter(option => this.settingsMatches(this.lookupSettingsSearch, option.label, option.value)
+      && (this.lookupSettingsStatus === 'all' || option.is_active === (this.lookupSettingsStatus === 'active')));
+  }
+  lookupMappingLabel(option: LookupOption): string {
+    const group = option.metadata_json['report_group'];
+    if (group) return 'Report group: ' + (this.reportGroups.find(item => item.value === group)?.label || group);
+    const code = option.metadata_json['report_code'];
+    return code ? 'Report meaning: ' + (this.reportCodes[option.category]?.find(item => item.value === code)?.label || code) : '';
+  }
+  settingDescription(key: string): string {
+    return ({announcement: 'Voice, volume and announcement playback', display: 'Patient privacy and waiting-room screen', queue: 'Patient order, recalls and arrival grace period'} as Record<string, string>)[key] || 'Manage preferences';
+  }
+  settingIcon(key: string): string {
+    return ({announcement: 'M11 4 5 9H2v6h3l6 5V4zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14', display: 'M3 4h18v13H3V4zm5 17h8m-4-4v4', queue: 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1'} as Record<string, string>)[key] || '';
+  }
+  get requiredFieldCount(): number { return Object.values(this.requiredDraft).filter(Boolean).length; }
+  get requiredFieldsChanged(): boolean {
+    return Object.keys(this.registrationFields).some(key => !!this.requiredDraft[key] !== this.requiredFields.includes(key));
+  }
+  get summaryMappingChangedCount(): number {
+    return this.summaryMappingRows.filter(row => row.category !== this.summaryMappingSaved[row.key]).length;
+  }
+  get newUserValid(): boolean {
+    return /^[a-zA-Z0-9._-]{2,80}$/.test(this.newUser.username) && this.newUser.full_name.trim().length >= 2
+      && this.newUser.password.length >= 10 && !!this.newUser.role
+      && (this.roleProfile(this.newUser.role) !== 'radiographer' || !!this.newUser.doctor_id);
+  }
+  get newRoleValid(): boolean {
+    return /^[a-z][a-z0-9_-]{1,29}$/.test(this.newRole.name) && this.newRole.display_name.trim().length >= 2;
+  }
+  private trackSettingsSave<T>(request: Observable<T>): Observable<T> {
+    this.settingsSaving = true;
+    return request.pipe(finalize(() => { this.settingsSaving = false; }));
+  }
   requiredFields = ['patient_name'];
   registrationFields: Record<string, string> = {};
   requiredDraft: Record<string, boolean> = {};
@@ -180,7 +234,13 @@ export class AppComponent implements OnDestroy {
     this.api.registrationFields().subscribe({next: data => {this.requiredFields = data.required; this.registrationFields = data.fields; this.requiredDraft = Object.fromEntries(Object.keys(data.fields).map(key => [key, data.required.includes(key)]));}, error: () => this.message = 'Could not load registration requirements.'});
   }
   saveRequiredFields(): void {
-    this.api.saveRegistrationFields(Object.keys(this.requiredDraft).filter(key => this.requiredDraft[key])).subscribe({next: () => {this.loadRegistrationFields(); this.notify('Required fields saved');}, error: error => this.message = this.apiErrorMessage(error, 'Could not save requirements.')});
+    if (this.requiredFieldsBusy || !this.requiredFieldsChanged) return;
+    this.requiredFieldsBusy = true;
+    const required = Object.keys(this.requiredDraft).filter(key => this.requiredDraft[key]);
+    this.api.saveRegistrationFields(required).pipe(finalize(() => { this.requiredFieldsBusy = false; })).subscribe({
+      next: () => { this.requiredFields = required; this.notify('Required fields saved'); },
+      error: error => this.message = this.apiErrorMessage(error, 'Could not save requirements.')
+    });
   }
   fieldRequired(key: string): boolean { return this.requiredFields.includes(key); }
   editingPatientId = '';
@@ -189,6 +249,7 @@ export class AppComponent implements OnDestroy {
   doctorDraft = {id: '', name: '', department: 'Radiology', designation: 'Radiographer', room_number: '', waiting_room_id: '', token_prefix: 'MRI'};
   doctorEditId = '';
   openDoctorEditor(doctor?: Doctor): void {
+    this.message = '';
     this.doctorEditId = doctor?.id || '';
     this.doctorDraft = {id: crypto.randomUUID(), name: doctor?.name || '', department: doctor?.department || 'Radiology', designation: 'Radiographer', room_number: doctor?.room || '', waiting_room_id: this.waitingRooms.find(room => room.code === doctor?.waitingRoom)?.id || this.waitingRooms[0]?.id || '', token_prefix: 'MRI'};
     this.editor = 'radiographer';
@@ -197,8 +258,17 @@ export class AppComponent implements OnDestroy {
     this.api.listDoctors().subscribe({next: doctors => { this.doctors = doctors; this.setDoctorRoomDrafts(); if (!doctors.some(d => d.id === this.selectedDoctorId)) this.selectedDoctorId = doctors[0]?.id || ''; }, error: error => this.message = this.apiErrorMessage(error, 'Could not load radiographers.')});
   }
   saveRadiographer(): void {
-    const request = this.doctorEditId ? this.api.updateDoctor(this.doctorEditId, {name: this.doctorDraft.name.trim()}) : this.api.createDoctor({...this.doctorDraft, name: this.doctorDraft.name.trim()});
-    request.subscribe({next: () => { this.editor = ''; this.reloadDoctors(); this.notify('Radiographer saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save radiographer.')});
+    if (this.settingsSaving) return;
+    const name = this.doctorDraft.name.trim();
+    const room_number = this.doctorDraft.room_number.trim();
+    if (name.length < 2 || name.length > 160 || !room_number || room_number.length > 30) {
+      this.message = 'Enter a radiographer name (2–160 characters) and room number (1–30 characters).';
+      return;
+    }
+    const request = this.doctorEditId
+      ? this.api.updateDoctor(this.doctorEditId, {name, room_number})
+      : this.api.createDoctor({...this.doctorDraft, name, room_number});
+    this.trackSettingsSave(request).subscribe({next: () => { this.editor = ''; this.reloadDoctors(); this.notify('Radiographer saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save radiographer.')});
   }
   removeRadiographer(doctor: Doctor): void {
     this.api.removeDoctor(doctor.id).subscribe({next: () => {this.reloadDoctors(); this.notify('Radiographer removed; historical records retained');}, error: error => this.message = this.apiErrorMessage(error, 'Could not remove radiographer.')});
@@ -229,12 +299,8 @@ export class AppComponent implements OnDestroy {
       error: () => { this.message = 'Serial will be assigned when saved.'; },
     });
   }
-  rankSearch = '';
   get registrationDate(): string { return new Intl.DateTimeFormat('en-CA').format(new Date()); }
-  get filteredRanks(): LookupOption[] {
-    return this.lookup('rank_relationship').filter(item => item.value === this.form.rank ||
-      `${item.label} ${item.value}`.toLowerCase().includes(this.rankSearch.toLowerCase()));
-  }
+
   printToken: QueueToken | null = null;
   lookupOptions: LookupOption[] = [];
   lookupCategories = ['department', 'room_number', 'sex', 'service_category', 'rank_relationship', 'priority_category', 'patient_source', 'beneficiary_type', 'service_status', 'entitlement', 'family_relationship'];
@@ -275,6 +341,7 @@ export class AppComponent implements OnDestroy {
     // Keep exactly one polling timer so repeated initialization cannot multiply
     // background requests.
     this.refreshSubscription?.unsubscribe();
+    if (this.currentUser?.must_change_password) return;
     const requestedView = new URLSearchParams(window.location.search).get('view');
     const defaultView: View = this.hasPermission('pages.dashboard') ? 'dashboard'
       : this.hasPermission('pages.radiographer') ? 'doctor'
@@ -398,19 +465,45 @@ export class AppComponent implements OnDestroy {
   }
 
   loadDashboard(): void {
-    this.api.dashboard().subscribe({
-      next: (dashboard) => { this.dashboard = dashboard; this.markSynced(); },
-      error: (error) => { this.message = error?.error?.detail || 'Could not load dashboard.'; this.markOffline(); },
+    const priority = this.dashboardPriority;
+    this.api.dashboard(priority).subscribe({
+      next: dashboard => { if (priority === this.dashboardPriority) { this.dashboard = dashboard; this.dashboardLoading = false; this.markSynced(); } },
+      error: error => { if (priority === this.dashboardPriority) { this.dashboardLoading = false; this.message = this.apiErrorMessage(error, 'Could not load dashboard.'); this.markOffline(); } },
     });
+  }
+  filterDashboard(): void {
+    this.dashboardLoading = true;
+    this.loadDashboard();
+  }
+  get dashboardPriorityLabel(): string {
+    return {all: 'All patients', vip: 'VIP only', non_vip: 'Non-VIP only'}[this.dashboardPriority];
+  }
+  dashboardPie(data: RadiographyDashboard): string {
+    const total = data.completed + data.waiting;
+    if (!total) return '#e7eeeb';
+    const completed = data.completed / total * 100;
+    return `conic-gradient(#2f7d5b 0% ${completed}%, #d6a900 ${completed}% 100%)`;
+  }
+  dashboardBars(data: RadiographyDashboard) {
+    const rows = [
+      {label: 'Waiting', value: data.waiting, color: '#d6a900'},
+      {label: 'Called', value: data.called, color: '#4f83b6'},
+      {label: 'In service', value: data.in_progress, color: '#7a68a6'},
+      {label: 'Completed', value: data.completed, color: '#2f7d5b'},
+      {label: 'Other', value: Math.max(0, data.total - data.waiting - data.called - data.in_progress - data.completed), color: '#8b9992'},
+    ];
+    const max = Math.max(1, ...rows.map(row => row.value));
+    return rows.map(row => ({...row, percent: row.value / max * 100}));
   }
 
   saveDoctorRoom(doctorId: string): void {
+    if (this.settingsSaving) return;
     const value = (this.doctorRoomDrafts[doctorId] ?? '').trim();
     if (!value) {
       this.message = 'Room number cannot be empty.';
       return;
     }
-    this.api.updateDoctor(doctorId, { room_number: value }).subscribe({
+    this.trackSettingsSave(this.api.updateDoctor(doctorId, { room_number: value })).subscribe({
       next: (updated) => {
         this.doctors = this.doctors.map((doctor) => doctor.id === updated.id ? { ...doctor, room: updated.room_number } : doctor);
         this.doctorRoomDrafts[updated.id] = updated.room_number;
@@ -438,8 +531,10 @@ export class AppComponent implements OnDestroy {
   }
 
   createUser(): void {
+    if (this.settingsSaving) return;
+    if (!this.newUserValid) return;
     const payload = { ...this.newUser, doctor_id: this.roleProfile(this.newUser.role) === 'radiographer' ? this.newUser.doctor_id || null : null };
-    this.api.createUser(payload).subscribe({
+    this.trackSettingsSave(this.api.createUser(payload)).subscribe({
       next: (user) => {
         this.users = [...this.users, user].sort((a, b) => a.username.localeCompare(b.username));
         this.editor = '';
@@ -485,7 +580,9 @@ export class AppComponent implements OnDestroy {
   }
 
   createRole(): void {
-    this.api.createRole(this.newRole).subscribe({
+    if (this.settingsSaving) return;
+    if (!this.newRoleValid) return;
+    this.trackSettingsSave(this.api.createRole(this.newRole)).subscribe({
       next: (role) => {
         this.roles = [...this.roles, role].sort((a, b) => a.display_name.localeCompare(b.display_name));
         this.selectedRoleName = role.name;
@@ -498,7 +595,8 @@ export class AppComponent implements OnDestroy {
   }
 
   saveRole(role: RoleDefinition): void {
-    this.api.updateRole(role.name, { display_name: role.display_name, access_profile: role.access_profile, description: role.description, permissions: role.permissions }).subscribe({
+    if (this.settingsSaving) return;
+    this.trackSettingsSave(this.api.updateRole(role.name, { display_name: role.display_name, access_profile: role.access_profile, description: role.description, permissions: role.permissions })).subscribe({
       next: updated => { this.roles = this.roles.map(item => item.name === updated.name ? updated : item); this.editor = ''; this.notify('Role saved'); },
       error: (error) => this.message = error?.error?.detail || 'Could not save role.',
     });
@@ -530,10 +628,11 @@ export class AppComponent implements OnDestroy {
   }
 
   submitResetPassword(): void {
+    if (this.settingsSaving) return;
     if (!this.editingUser || this.resetPasswordValue.length < 10) return;
     const account = this.editingUser;
-    this.api.resetUserPassword(account.id, this.resetPasswordValue).subscribe({
-      next: () => { this.editor = ''; this.resetPasswordValue = ''; this.notify(`Password updated for ${account.username}.`); },
+    this.trackSettingsSave(this.api.resetUserPassword(account.id, this.resetPasswordValue)).subscribe({
+      next: () => { this.editor = ''; this.resetPasswordValue = ''; this.users = this.users.map(user => user.id === account.id ? {...user, must_change_password: true} : user); if (account.id === this.currentUser?.id) { window.location.reload(); return; } this.notify(`Temporary password set for ${account.username}; password change required at login.`); },
       error: (error) => this.message = error?.error?.detail || 'Could not reset password.',
     });
   }
@@ -724,14 +823,14 @@ export class AppComponent implements OnDestroy {
     request.subscribe({
       next: (token) => {
         this.notify(`Patient ${this.editingPatientId ? 'updated' : 'added'} · ${token.serial_number || token.token_number}`);
-        this.form.beneficiary_type = this.form.service_status = this.form.entitlement = this.form.sponsor_rank = this.form.family_relationship = this.sponsorSearch = '';
+        this.form.beneficiary_type = this.form.service_status = this.form.entitlement = this.form.sponsor_rank = this.form.family_relationship =
         this.form.priority = 'normal';
         this.form.patient_name = '';
         this.form.patient_phone = '';
         this.form.rank = '';
         this.form.service_number = '';
         this.form.age = this.form.contrast = this.form.film = null;
-        this.form.unit = this.form.mri_area = this.form.report = this.form.patient_source = this.rankSearch = '';
+        this.form.unit = this.form.mri_area = this.form.report = this.form.patient_source = '';
         this.busy = false;
         this.showReceptionModal = false;
         this.refresh();
@@ -818,6 +917,7 @@ export class AppComponent implements OnDestroy {
     this.newLookup = { category: this.selectedLookupCategory, value: '', label: '', sort_order: 0 }; this.editor = 'lookup';
   }
   saveLookup(): void {
+    if (this.settingsSaving) return;
     const label = this.newLookup.label.trim();
     if (!label) return;
     const metadata = { ...(this.editingLookup?.metadata_json || {}) };
@@ -828,7 +928,7 @@ export class AppComponent implements OnDestroy {
     const payload = { ...this.newLookup, category: this.selectedLookupCategory, label,
       value: (this.newLookup.value.trim() || label).toLowerCase().replace(/[^a-z0-9._-]+/g, '_'), metadata_json: metadata };
     const request = this.editingLookup ? this.api.updateLookup(this.editingLookup.id, { label, sort_order: payload.sort_order, metadata_json: metadata }) : this.api.createLookup(payload);
-    request.subscribe({ next: item => { this.lookupOptions = [...this.lookupOptions.filter(old => old.id !== item.id), item]; this.editor = ''; this.notify('Dropdown option saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save option.') });
+    this.trackSettingsSave(request).subscribe({ next: item => { this.lookupOptions = [...this.lookupOptions.filter(old => old.id !== item.id), item]; this.editor = ''; this.notify('Dropdown option saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save option.') });
   }
   designationChanged(): void {
     const designation = this.lookupOptions.find(item => item.category === 'rank_relationship' && item.value === this.form.rank);
@@ -912,7 +1012,8 @@ export class AppComponent implements OnDestroy {
   }
 
   saveSetting(setting: AppSetting): void {
-    this.api.saveSetting(setting.key, setting.value).subscribe({ next: () => { this.settings = this.settings.map(item => item.key === setting.key ? structuredClone(setting) : item); this.editor = ''; this.notify(`${setting.key} settings saved.`); }, error: () => this.message = 'Unable to save settings.' });
+    if (this.settingsSaving) return;
+    this.trackSettingsSave(this.api.saveSetting(setting.key, setting.value)).subscribe({ next: () => { this.settings = this.settings.map(item => item.key === setting.key ? structuredClone(setting) : item); this.editor = ''; this.notify(`${setting.key} settings saved.`); }, error: () => this.message = 'Unable to save settings.' });
   }
 
   testAnnouncement(setting: AppSetting): void {
@@ -945,7 +1046,10 @@ export class AppComponent implements OnDestroy {
         this.passwordBusy = false;
         this.editor = '';
         this.passwordForm = { current: '', next: '', confirm: '' };
+        const wasRequired = this.currentUser?.must_change_password;
+        if (this.currentUser) this.currentUser.must_change_password = false;
         this.message = 'Password changed. Other signed-in sessions were closed.';
+        if (wasRequired) this.initialize();
       },
       error: (error) => {
         this.passwordBusy = false;
@@ -954,11 +1058,59 @@ export class AppComponent implements OnDestroy {
     });
   }
 
+  summaryMappingRows: {key: string; label: string; category: string | null; default_category: string | null}[] = [];
+  summaryMappingColumns: {key: string; label: string}[] = [];
+  summaryMappingSearch = '';
+  get visibleSummaryMappingRows() {
+    const query = this.summaryMappingSearch.trim().toLowerCase();
+    return this.summaryMappingRows.filter(row => !query || row.label.toLowerCase().includes(query));
+  }
+  summaryMappingBusy = false;
+  summaryMappingError = '';
+  summaryMappingLoading = false;
+  summaryMappingSaved: Record<string, string | null> = {};
+  loadSummaryMapping(): void {
+    this.settingsTab = 'summary-mapping';
+    this.summaryMappingSearch = '';
+    this.summaryMappingRows = [];
+    this.summaryMappingSaved = {};
+    this.syncSummaryMapping();
+  }
+  syncSummaryMapping(): void {
+    if (this.summaryMappingBusy || this.summaryMappingLoading) return;
+    this.summaryMappingLoading = true;
+    this.api.summaryMapping().subscribe({next: data => {
+      const drafts = new Map(this.summaryMappingRows.map(row => [row.key, row]));
+      this.summaryMappingRows = data.rows.map(row => {
+        const draft = drafts.get(row.key);
+        return draft && draft.category !== this.summaryMappingSaved[row.key] ? {...row, category: draft.category} : row;
+      });
+      this.summaryMappingSaved = Object.fromEntries(data.rows.map(row => [row.key, row.category]));
+      this.summaryMappingColumns = data.columns;
+      this.summaryMappingLoading = false;
+      this.summaryMappingError = '';
+    }, error: error => {
+      this.summaryMappingLoading = false;
+      this.summaryMappingError = this.apiErrorMessage(error, 'Could not refresh summary mappings.');
+    }});
+  }
+  resetSummaryMapping(): void {
+    this.summaryMappingRows = this.summaryMappingRows.map(row => ({...row, category: row.default_category}));
+  }
+  saveSummaryMapping(): void {
+    this.summaryMappingBusy = true;
+    this.summaryMappingError = '';
+    this.api.saveSummaryMapping(Object.fromEntries(this.summaryMappingRows.map(row => [row.key, row.category]))).subscribe({
+      next: () => { this.summaryMappingSaved = Object.fromEntries(this.summaryMappingRows.map(row => [row.key, row.category])); this.summaryMappingBusy = false; this.notify('MRI summary mapping saved'); },
+      error: error => { this.summaryMappingBusy = false; this.summaryMappingError = this.apiErrorMessage(error, 'Could not save summary mapping.'); if (error.status === 409) { this.notify('Dropdown options changed. Review the refreshed mappings and save again.'); this.syncSummaryMapping(); } }
+    });
+  }
+
   loadSettings(): void {
     this.loadRegistrationFields();
     if (this.hasPermission('settings.manage')) {
       this.api.settings().subscribe((settings) => {
-        this.settings = settings.filter(setting => setting.key !== 'registration_fields').map((setting) => setting.key === 'announcement' ? {
+        this.settings = settings.filter(setting => !['registration_fields', 'mri_summary_mapping'].includes(setting.key)).map((setting) => setting.key === 'announcement' ? {
           ...setting,
           value: { voice_mode: 'auto', cache_max_files: 40, ...setting.value },
         } : setting);
@@ -976,16 +1128,18 @@ export class AppComponent implements OnDestroy {
   }
 
   createHoliday(): void {
+    if (this.settingsSaving) return;
     if (!this.newHoliday.holiday_date || !this.newHoliday.name.trim()) return;
-    this.api.createHoliday(this.newHoliday).subscribe({
+    this.trackSettingsSave(this.api.createHoliday(this.newHoliday)).subscribe({
       next: (item) => { this.editor = ''; this.holidays = [...this.holidays, item].sort((a, b) => a.holiday_date.localeCompare(b.holiday_date)); this.newHoliday = { holiday_date: '', name: '' }; },
       error: (error) => this.message = error?.error?.detail || 'Could not add holiday.',
     });
   }
 
   createDevice(): void {
+    if (this.settingsSaving) return;
     if (!this.newDevice.name.trim()) return;
-    this.api.createDevice(this.newDevice).subscribe({
+    this.trackSettingsSave(this.api.createDevice(this.newDevice)).subscribe({
       next: (created) => {
         this.editor = '';
         this.devices = [...this.devices, created.device];
@@ -1122,6 +1276,7 @@ export class AppComponent implements OnDestroy {
   }
 
   refresh(showIndicator = true): void {
+    if (this.view === 'settings' && this.settingsTab === 'summary-mapping' && this.hasPermission('settings.manage')) this.syncSummaryMapping();
     if (showIndicator) this.isRefreshing = true;
     if (this.view === 'dashboard') { this.loadDashboard(); if (this.dashboardDetail) this.loadDashboardPatients(false); return; }
     if (this.view === 'display') {
@@ -1161,8 +1316,9 @@ export class AppComponent implements OnDestroy {
   openRole(role: RoleDefinition): void { this.roleDraft = structuredClone(role); this.editor = 'role'; }
   openUser(user: AuthUser): void { this.editingUser = structuredClone(user); this.editor = 'user'; }
   saveUserAssignment(): void {
+    if (this.settingsSaving) return;
     const user = this.editingUser; if (!user) return;
-    this.api.updateUser(user.id, { role: user.role, doctor_id: this.roleProfile(user.role) === 'radiographer' ? user.doctor_id || null : null }).subscribe({ next: updated => { this.users = this.users.map(item => item.id === updated.id ? updated : item); this.editor = ''; this.notify('Assignment saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save assignment.') });
+    this.trackSettingsSave(this.api.updateUser(user.id, { role: user.role, doctor_id: this.roleProfile(user.role) === 'radiographer' ? user.doctor_id || null : null })).subscribe({ next: updated => { this.users = this.users.map(item => item.id === updated.id ? updated : item); this.editor = ''; this.notify('Assignment saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save assignment.') });
   }
 
   notify(message: string): void {
@@ -1206,7 +1362,7 @@ export class AppComponent implements OnDestroy {
     if (showLoading) { this.detailLoading = true; this.dashboardPatients = []; }
     this.detailError = '';
     const detail = this.dashboardDetail;
-    this.api.dashboardPatients(detail).subscribe({next: rows => { if (detail === this.dashboardDetail) { this.dashboardPatients = rows; this.detailLoading = false; } }, error: error => { if (detail === this.dashboardDetail) { this.detailLoading = false; this.detailError = this.apiErrorMessage(error, 'Could not load patient details.'); } }});
+    this.api.dashboardPatients(detail, this.dashboardPriority).subscribe({next: rows => { if (detail === this.dashboardDetail) { this.dashboardPatients = rows; this.detailLoading = false; } }, error: error => { if (detail === this.dashboardDetail) { this.detailLoading = false; this.detailError = this.apiErrorMessage(error, 'Could not load patient details.'); } }});
   }
   @HostListener('window:popstate') restorePage(): void {
     const params = new URLSearchParams(location.search); const view = (params.get('view') || 'dashboard') as View;

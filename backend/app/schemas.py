@@ -166,6 +166,7 @@ class UserCreate(BaseModel):
 
 
 class UserRead(BaseModel):
+    must_change_password: bool = False
     model_config = ConfigDict(from_attributes=True)
     id: str
     username: str

@@ -1435,13 +1435,18 @@ def test_date_range_summary_drilldown_and_exports():
 
 def test_waiting_patient_edit_and_required_fields():
     token = client.post('/api/v1/tokens', json=token_payload()).json()
-    assert client.put('/api/v1/registration-fields', json={'value': {'required': ['patient_name', 'age', 'mri_area']}}).status_code == 200
+    assert client.put('/api/v1/registration-fields', json={'value': {'required': ['patient_name', 'age', 'mri_area', 'patient_phone']}}).status_code == 200
     assert client.post('/api/v1/tokens', json=token_payload()).status_code == 422
     assert client.patch(f"/api/v1/tokens/{token['id']}", json=token_payload()).status_code == 422
     payload = {**token_payload('Corrected Name'), 'age': 0, 'mri_area': 'Brain', 'doctor_id': 'fake', 'room_number': 'fake'}
+    assert client.get('/api/v1/registration-fields').json()['fields']['patient_phone'] == 'Contact number'
+    blank_phone = {**payload, 'patient_phone': '   '}
+    assert client.post('/api/v1/tokens', json=blank_phone).status_code == 422
+    assert client.patch(f"/api/v1/tokens/{token['id']}", json=blank_phone).status_code == 422
     edited = client.patch(f"/api/v1/tokens/{token['id']}", json=payload)
     assert edited.status_code == 200, edited.text
     assert edited.json()['patient_name'] == 'Corrected Name'
+    assert edited.json()['patient_phone'] == payload['patient_phone']
     for field in ['serial_number', 'token_number', 'doctor_id', 'room_number', 'token_date']:
         assert edited.json()[field] == token[field]
     assert client.put('/api/v1/registration-fields', json={'value': {'required': ['status']}}).status_code == 422
@@ -1497,3 +1502,232 @@ def test_radiographer_management_and_role_logins():
     with SessionLocal() as db:
         assert db.get(Doctor, 'second-radio').is_active is False
         assert db.get(QueueToken, token['id']).patient_name == token['patient_name']
+
+
+def test_configurable_summary_mapping_preserves_snapshots_and_validates_changes():
+    from app.database import SessionLocal
+    from app.models import AuditEvent
+    install_summary_lookups()
+    payload = {**token_payload(), 'rank': '', 'beneficiary_type': 'family', 'entitlement': 'military',
+               'service_status': 'retired', 'sponsor_rank': 'jco', 'family_relationship': 'spouse'}
+    old = client.post('/api/v1/tokens', json=payload).json()
+    assert old['summary_category'] is None
+    response = client.get('/api/v1/mri-summary-mapping')
+    assert response.status_code == 200
+    mappings = {row['key']: row['category'] for row in response.json()['rows']}
+    assert len(mappings) == 44
+    mappings['military:family:retired:jco'] = 'family_jco_or_nce'
+    mappings['re'] = None
+    assert client.put('/api/v1/mri-summary-mapping', json={'mappings': mappings}).status_code == 200
+    assert {row['key']: row['category'] for row in client.get('/api/v1/mri-summary-mapping').json()['rows']} == mappings
+    assert client.post('/api/v1/tokens', json=payload).json()['summary_category'] == 'family_jco_or_nce'
+    assert client.post('/api/v1/tokens', json={**token_payload(), 'rank': '', 'entitlement': 're'}).json()['summary_category'] is None
+    with SessionLocal() as db:
+        assert db.get(QueueToken, old['id']).summary_category is None
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'mri_summary.mapping_updated'))
+    correction = client.patch(f"/api/v1/tokens/{old['id']}/classification", json={key: payload.get(key, '') for key in ['beneficiary_type', 'entitlement', 'service_status', 'sponsor_rank', 'family_relationship', 'rank']})
+    assert correction.status_code == 200
+    assert correction.json()['summary_category'] == 'family_jco_or_nce'
+    for invalid, status in [({}, 409), ({**mappings, 're': 'invalid'}, 422), ({**mappings, 'unknown': 're'}, 409)]:
+        assert client.put('/api/v1/mri-summary-mapping', json={'mappings': invalid}).status_code == status
+    assert client.put('/api/v1/settings/mri_summary_mapping', json={'value': mappings}).status_code == 422
+    with SessionLocal() as db:
+        db.add(User(username='mapping-reader', full_name='Reader', password_hash=hash_password('ReaderPass123!'), role='auditor', is_active=True))
+        db.commit()
+    client.post('/api/v1/auth/login', json={'username': 'mapping-reader', 'password': 'ReaderPass123!'}).raise_for_status()
+    assert client.get('/api/v1/mri-summary-mapping').status_code == 403
+    assert client.put('/api/v1/mri-summary-mapping', json={'mappings': mappings}).status_code == 403
+
+
+def test_admin_creates_roles_users_and_reset_requires_password_change_for_every_role():
+    from app.database import SessionLocal
+    from app.auth import LEGACY_ROLE_PERMISSIONS, websocket_user
+    with SessionLocal() as db:
+        for role, permissions in LEGACY_ROLE_PERMISSIONS.items():
+            db.add(RoleDefinition(name=role, display_name=role, access_profile='auditor' if role == 'radiography_head' else role, permissions=list(permissions)))
+        db.commit()
+    assert client.post('/api/v1/roles', json={'name': 'custom_role', 'display_name': 'Custom Role', 'access_profile': 'auditor', 'permissions': ['reports.view']}).status_code == 201
+    for role in [*LEGACY_ROLE_PERMISSIONS, 'custom_role']:
+        client.post('/api/v1/auth/login', json={'username': 'admin', 'password': 'AdminPass123!'}).raise_for_status()
+        result = client.post('/api/v1/users', json={'username': f'test-{role}', 'full_name': 'Test User', 'password': 'Temporary123!', 'role': role, 'doctor_id': 'dr-khan' if role == 'radiographer' else None})
+        assert result.status_code == 201, result.text
+        user_id = result.json()['id']
+        assert result.json()['must_change_password']
+        login = client.post('/api/v1/auth/login', json={'username': f'test-{role}', 'password': 'Temporary123!'})
+        assert login.status_code == 200 and login.json()['must_change_password']
+        assert client.get('/api/v1/doctors').status_code == 403
+        assert client.get('/api/v1/auth/session').json()['must_change_password']
+        with SessionLocal() as db:
+            assert websocket_user(type('Socket', (), {'cookies': dict(client.cookies)})(), db) is None
+        assert client.post('/api/v1/auth/password', json={'current_password': 'WrongPassword123!', 'new_password': 'Personal123!'}).status_code == 400
+        assert client.post('/api/v1/auth/password', json={'current_password': 'Temporary123!', 'new_password': 'Temporary123!'}).status_code == 400
+        assert client.post('/api/v1/auth/password', json={'current_password': 'Temporary123!', 'new_password': 'Personal123!'}).status_code == 204
+        assert not client.get('/api/v1/auth/session').json()['must_change_password']
+        old_cookie = client.cookies.get('cmh_session')
+        client.post('/api/v1/auth/login', json={'username': 'admin', 'password': 'AdminPass123!'}).raise_for_status()
+        assert client.post(f'/api/v1/users/{user_id}/password', json={'new_password': 'ResetAgain123!'}).status_code == 204
+        stale = TestClient(app)
+        stale.cookies.set('cmh_session', old_cookie)
+        assert stale.get('/api/v1/auth/me').status_code == 401
+        assert client.post('/api/v1/auth/login', json={'username': f'test-{role}', 'password': 'Personal123!'}).status_code == 401
+        reset_login = client.post('/api/v1/auth/login', json={'username': f'test-{role}', 'password': 'ResetAgain123!'})
+        assert reset_login.status_code == 200 and reset_login.json()['must_change_password']
+        assert client.get('/api/v1/users').status_code == 403
+        assert client.post('/api/v1/auth/logout').status_code == 204
+
+
+def test_seed_all_roles_is_idempotent_and_hides_internal_settings(monkeypatch):
+    from app.seed import seed
+    from app.database import SessionLocal
+    monkeypatch.setenv('CMH_SMS_ADMIN_PASSWORD', 'SeedAdmin123!')
+    monkeypatch.setenv('CMH_SMS_SEED_USER_PASSWORD', 'SeedStaff123!')
+    seed()
+    with SessionLocal() as db:
+        users = list(db.scalars(select(User)))
+        assert {user.role for user in users} == {'admin', 'reception', 'radiographer', 'radiography_head', 'auditor', 'display'}
+        assert len([user for user in users if user.role == 'radiographer']) == 4
+        hashes = {user.username: user.password_hash for user in users}
+        assert all(user.must_change_password for user in users if user.username != 'admin')
+        db.scalar(select(User).where(User.username == 'reception')).must_change_password = False
+        db.commit()
+    seed()
+    with SessionLocal() as db:
+        assert {user.username: user.password_hash for user in db.scalars(select(User))} == hashes
+        assert not db.scalar(select(User).where(User.username == 'reception')).must_change_password
+    keys = {setting['key'] for setting in client.get('/api/v1/settings').json()}
+    assert 'mri_rank_mapping_initialized' not in keys
+    assert 'display' in keys
+
+
+def test_individual_dropdown_rank_mapping_overrides_group_and_supports_new_ranks():
+    from app.database import SessionLocal
+    from app.models import LookupOption
+    install_summary_lookups()
+    with SessionLocal() as db:
+        db.add(LookupOption(category='rank_relationship', value='custom-rank', label='Custom rank', metadata_json={}))
+        db.commit()
+    rows = client.get('/api/v1/mri-summary-mapping').json()['rows']
+    mappings = {row['key']: row['category'] for row in rows}
+    for person in ('self', 'family'):
+        for status in ('serving', 'retired'):
+            assert f'rank:{person}:{status}:custom-rank' in mappings
+    mappings['rank:self:serving:custom-rank'] = 'serving_nce'
+    mappings['rank:self:serving:officer'] = 'serving_cadet'
+    assert client.put('/api/v1/mri-summary-mapping', json={'mappings': mappings}).status_code == 200
+    for rank, expected in [('custom-rank', 'serving_nce'), ('officer', 'serving_cadet'), ('jco', 'serving_jco_or')]:
+        response = client.post('/api/v1/tokens', json={**token_payload(), 'rank': rank, 'beneficiary_type': 'self', 'entitlement': 'military', 'service_status': 'serving'})
+        assert response.status_code == 201, response.text
+        assert response.json()['summary_category'] == expected
+
+
+def test_password_reset_through_user_edit_also_revokes_sessions():
+    from app.database import SessionLocal
+    from app.models import UserSession
+    from app.auth import new_session
+    with SessionLocal() as db:
+        db.add(RoleDefinition(name='admin', display_name='Admin', access_profile='admin', permissions=['*']))
+        user = db.scalar(select(User).where(User.username == 'admin'))
+        user_id = user.id
+        new_session(db, user)
+    reset = client.patch(f'/api/v1/users/{user_id}', json={'password': 'ResetThroughEdit123!'})
+    assert reset.status_code == 200 and reset.json()['must_change_password']
+    with SessionLocal() as db:
+        assert not list(db.scalars(select(UserSession).where(UserSession.user_id == user_id)))
+    assert client.get('/api/v1/auth/me').status_code == 401
+    assert client.post('/api/v1/auth/login', json={'username': 'admin', 'password': 'ResetThroughEdit123!'}).json()['must_change_password']
+    assert client.get('/api/v1/settings').status_code == 403
+
+
+def test_mapping_tracks_dropdown_add_rename_disable_restore_and_delete():
+    from app.database import SessionLocal
+    from app.models import LookupOption
+    install_summary_lookups()
+
+    def mappings():
+        return {row['key']: row for row in client.get('/api/v1/mri-summary-mapping').json()['rows']}
+
+    def save(rows):
+        return client.put('/api/v1/mri-summary-mapping', json={'mappings': {key: row['category'] for key, row in rows.items()}})
+
+    original = mappings()
+    added = client.post('/api/v1/lookups', json={'category': 'rank_relationship', 'value': 'new-rank', 'label': 'New rank', 'metadata_json': {'report_group': 'or'}})
+    assert added.status_code == 201
+    rank_id = added.json()['id']
+    key = 'rank:self:serving:new-rank'
+    assert save(original).status_code == 409
+    rows = mappings()
+    assert len(rows) == len(original) + 4
+    assert rows[key]['category'] == '__inherit__'
+    rows[key]['category'] = 'serving_nce'
+    assert save(rows).status_code == 200
+    client.patch(f'/api/v1/lookups/{rank_id}', json={'label': 'Renamed rank'}).raise_for_status()
+    renamed = mappings()
+    assert 'Renamed rank' in renamed[key]['label']
+    assert renamed[key]['category'] == 'serving_nce'
+    token = client.post('/api/v1/tokens', json={**token_payload(), 'rank': 'new-rank', 'beneficiary_type': 'self', 'service_status': 'serving', 'entitlement': 'military'}).json()
+    assert token['summary_category'] == 'serving_nce'
+    client.patch(f'/api/v1/lookups/{rank_id}', json={'is_active': False}).raise_for_status()
+    assert key not in mappings()
+    assert save(renamed).status_code == 409
+    assert save(mappings()).status_code == 200
+    client.patch(f'/api/v1/lookups/{rank_id}', json={'is_active': True}).raise_for_status()
+    assert mappings()[key]['category'] == 'serving_nce'
+    with SessionLocal() as db:
+        db.delete(db.get(LookupOption, rank_id))
+        db.commit()
+    assert key not in mappings()
+    with SessionLocal() as db:
+        assert db.get(QueueToken, token['id']).summary_category == 'serving_nce'
+
+
+def test_mapping_tracks_patient_type_status_and_entitlement_dropdowns():
+    install_summary_lookups()
+    options = client.get('/api/v1/lookups').json()
+    ids = {(row['category'], row['value']): row['id'] for row in options}
+
+    def rows():
+        return client.get('/api/v1/mri-summary-mapping').json()['rows']
+
+    client.patch(f"/api/v1/lookups/{ids['service_status', 'retired']}", json={'is_active': False}).raise_for_status()
+    assert not any(':retired:' in row['key'] for row in rows())
+    alias = client.post('/api/v1/lookups', json={'category': 'service_status', 'value': 'former', 'label': 'Former service', 'metadata_json': {'report_code': 'retired'}})
+    assert alias.status_code == 201
+    assert all('Former service' in row['label'] for row in rows() if ':retired:' in row['key'])
+    assert any(':retired:' in row['key'] for row in rows())
+    client.patch(f"/api/v1/lookups/{ids['beneficiary_type', 'family']}", json={'label': 'Dependants'}).raise_for_status()
+    assert all('Dependants' in row['label'] for row in rows() if ':family' in row['key'])
+    client.patch(f"/api/v1/lookups/{ids['entitlement', 'military']}", json={'is_active': False}).raise_for_status()
+    assert not any(row['key'].startswith(('military:', 'rank:')) for row in rows())
+    client.patch(f"/api/v1/lookups/{ids['entitlement', 're']}", json={'is_active': False}).raise_for_status()
+    assert not any(row['key'] == 're' for row in rows())
+
+
+def test_dashboard_priority_filter_applies_to_totals_charts_rooms_and_details():
+    from app.database import SessionLocal
+    states = [('waiting', 'normal'), ('waiting', 'vip'), ('completed', 'normal'),
+              ('completed', 'vip'), ('called', 'vip'), ('in_progress', 'normal'), ('cancelled', 'vip')]
+    for index, (status, priority) in enumerate(states):
+        created = client.post('/api/v1/tokens', json={**token_payload(f'Chart Patient {index}'), 'priority': priority}).json()
+        with SessionLocal() as db:
+            token = db.get(QueueToken, created['id'])
+            token.status = status
+            token.doctor_id = 'dr-khan'
+            token.room_number = '205'
+            if status == 'completed':
+                token.called_at = token.created_at + timedelta(minutes=4 if priority == 'vip' else 10)
+                token.completed_at = token.called_at + timedelta(minutes=10)
+            db.commit()
+    for priority, total, waiting, completed, average in [('all', 7, 2, 2, 7), ('vip', 4, 1, 1, 4), ('non_vip', 3, 1, 1, 10)]:
+        response = client.get('/api/v1/dashboard', params={'priority': priority})
+        assert response.status_code == 200
+        data = response.json()
+        assert (data['total'], data['waiting'], data['completed'], data['average_wait_minutes']) == (total, waiting, completed, average)
+        assert data['radiographers'][0]['total'] == total
+        assert data['rooms'][0]['total'] == total
+        patients = client.get('/api/v1/dashboard/patients', params={'priority': priority}).json()
+        assert len(patients) == total
+        assert len(client.get('/api/v1/dashboard/patients', params={'priority': priority, 'status': 'completed'}).json()) == completed
+        if priority != 'all':
+            assert all((patient['priority'] == 'vip') == (priority == 'vip') for patient in patients)
+    assert client.get('/api/v1/dashboard', params={'priority': 'invalid'}).status_code == 422
+    assert client.get('/api/v1/dashboard/patients', params={'priority': 'invalid'}).status_code == 422

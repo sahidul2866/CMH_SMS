@@ -90,6 +90,10 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = user_for_session(db, request.cookies.get(SESSION_COOKIE))
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Authentication required")
+    if user.must_change_password and request.url.path not in {
+        '/api/v1/auth/password', '/api/v1/auth/logout', '/api/v1/auth/me',
+    }:
+        raise HTTPException(403, 'Change your temporary password before continuing')
     return user
 
 
@@ -122,4 +126,5 @@ def require_permission(permission: str):
 
 
 def websocket_user(websocket: WebSocket, db: Session) -> User | None:
-    return user_for_session(db, websocket.cookies.get(SESSION_COOKIE))
+    user = user_for_session(db, websocket.cookies.get(SESSION_COOKIE))
+    return user if user and not user.must_change_password else None

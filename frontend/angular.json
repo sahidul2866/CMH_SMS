@@ -14,7 +14,16 @@
             "index": "src/index.html",
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
-            "styles": ["src/styles.scss"]
+            "styles": [
+              "src/styles.scss"
+            ],
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "public",
+                "output": "/"
+              }
+            ]
           },
           "configurations": {
             "production": {
@@ -29,17 +38,26 @@
               "outputHashing": "all",
               "sourceMap": false
             },
-            "development": { "optimization": false, "sourceMap": true }
+            "development": {
+              "optimization": false,
+              "sourceMap": true
+            }
           },
           "defaultConfiguration": "production"
         },
         "serve": {
           "builder": "@angular/build:dev-server",
-          "configurations": { "development": { "buildTarget": "cmh-smart-serial:build:development" } },
+          "configurations": {
+            "development": {
+              "buildTarget": "cmh-smart-serial:build:development"
+            }
+          },
           "defaultConfiguration": "development"
         }
       }
     }
   },
-  "cli": { "analytics": false }
+  "cli": {
+    "analytics": false
+  }
 }

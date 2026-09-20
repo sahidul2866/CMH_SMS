@@ -1,6 +1,7 @@
 export type View = 'dashboard' | 'reception' | 'appointments' | 'doctor' | 'reports' | 'reception-report' | 'settings' | 'display';
 
 export interface AuthUser {
+  must_change_password?: boolean;
   id: string;
   username: string;
   full_name: string;

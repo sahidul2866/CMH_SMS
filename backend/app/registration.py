@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from .models import AppSetting
 
 FIELDS = {
-    'patient_name': 'Name', 'patient_source': 'Patient source',
+    'patient_name': 'Name', 'patient_phone': 'Contact number', 'patient_source': 'Patient source',
     'service_number': 'Service No./BA', 'age': 'Age', 'unit': 'Unit',
     'mri_area': 'Area of body for MRI', 'contrast': 'Contrast', 'film': 'Film', 'report': 'Report',
 }

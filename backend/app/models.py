@@ -178,6 +178,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(300), nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     role: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     doctor_id: Mapped[str | None] = mapped_column(String(60), ForeignKey("doctors.id"), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

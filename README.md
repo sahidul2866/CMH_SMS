@@ -210,9 +210,35 @@ documented restore drill are still required for the approved RPO/RTO.
 
 ### Reception and radiographer improvements
 
-- **Settings → Radiographers** lets directory administrators add radiographers, edit names and remove them from the active directory. Removal preserves historical records and requires staff accounts, active patients and pending appointments to be resolved first.
+- **Settings → Radiographers** lets directory administrators add radiographers, edit names and corresponding room numbers together, and remove them from the active directory. Removal preserves historical records and requires staff accounts, active patients and pending appointments to be resolved first.
 - **Radiographers → Radiographer availability** shows every active radiographer’s room and occupied/available state, refreshing every two seconds. Called, recalled and in-service patients count as occupied. Queue actions remain restricted to the signed-in radiographer’s assignment.
 - **Reception → Waiting patients → Edit** updates registration details while preserving the serial, date and queue assignment. The server rejects an edit if the patient has already been called.
 - **Reception Report → MRI summary** accepts inclusive from/to dates, including ranges across months (up to 367 days). Drill-downs and Excel/PDF exports use the loaded report’s range and counting basis. Existing API clients can continue using `month=YYYY-MM`.
 - **Settings → Console settings → Required patient fields** controls mandatory registration fields. Name always remains mandatory; additional requirements apply to creation and waiting-patient edits and are enforced by the server. An asterisk marks required fields. Existing records are preserved.
 - Role integration tests use isolated test accounts for admin, radiographer, a custom `head_of_dept` role, reception, auditor and display; they do not change deployed user accounts.
+
+### MRI summary mapping
+
+Settings → MRI summary mapping lets users with `settings.manage` choose a report column (or Needs review) for up to 24 report-group combinations plus individual overrides for every active rank/designation (Self/Family × Serving/Retired). Custom ranks appear automatically; select Use report-group mapping to inherit the group rule. Military combinations use patient type, service status and rank group; family combinations use the sponsor’s rank and status. Civil entitled, RE and CNE have their own mappings. Rank groups remain configurable under Dropdown options → Designation / Rank. Restore default mappings resets the draft; Save mappings persists it.
+
+Mappings start with the existing report rules and survive restarts. Changes are audited and apply when creating registrations or saving classification edits, including waiting-patient edits. Existing saved categories are retained until a record is edited. Incomplete inputs remain Needs review; required family relationship and sponsor-rank validation still applies. Report columns and export layouts remain fixed.
+
+### User accounts and temporary passwords
+
+Administrators can create roles and users, assign roles, and reset passwords for all accounts, including other administrators. New accounts and administrator-reset passwords require a password change immediately after login. Until then, operational API and websocket access is blocked. Resetting a password revokes existing sessions; changing it clears the requirement.
+
+Run the usual migration and seed steps (`cd backend`, `.venv/bin/alembic upgrade head`, `.venv/bin/python -m app.seed`) with deployment environment variables loaded. The seed creates missing built-in roles and these accounts: the configured administrator, `reception`, `radiographer`, `radiographer2`, `radiographer3`, `radiographer4`, `radiography_head`, `auditor`, and `display`. Radiographers are assigned to the four seeded directory entries. The administrator uses `CMH_SMS_ADMIN_PASSWORD`; staff use `CMH_SMS_SEED_USER_PASSWORD`, falling back to that administrator bootstrap password. Supply one of these environment variables to create staff accounts; no hardcoded password is used. Existing accounts, passwords and assignments are preserved on subsequent seed runs.
+
+`mri_rank_mapping_initialized` is an internal one-time seed marker, excluded from the settings UI. It prevents initial rank mappings from overwriting administrator edits.
+
+The MRI mapping editor refreshes automatically while open. Active patient-type, entitlement and service-status report codes determine which combinations appear; current dropdown labels are shown, including aliases sharing a report code. Adding or renaming a rank updates its rows, and disabling/removing it hides them. Unsaved edits on remaining rows survive refresh. Saved rules for disabled values are retained for re-enabling, while existing patient classifications remain unchanged. A save made against an outdated dropdown list requests review of the refreshed rows before saving again.
+
+### Illustrated user manual
+
+Select **User manual** beside **Sign out** to open the offline guide in a new tab. It covers administrator settings, users, roles, temporary passwords, required fields, dropdowns, MRI mappings, radiographer rooms, console settings and daily workflows. Screenshots use an isolated training database. The guide includes a table of contents, full-size screenshot links and **Print / Save PDF**. Source and screenshots live in `frontend/public/manual/` and are copied into the frontend build.
+
+### Dashboard and searchable ranks
+
+The dashboard overview fits one viewport and contains a Completed vs Waiting pie chart and a patient-status bar chart. The All / VIP / Non-VIP filter applies to aggregates, room metrics and patient drilldowns while preserving role scope. Pie percentages include only waiting and completed records; called, in-service and other statuses remain visible in the status chart. Patient-detail pages remain separate from the compact overview.
+
+Designation / Rank, Sponsor rank and the classification editor’s Patient rank use a single searchable combobox. Type to filter, click or use Up/Down and Enter to select, Escape to dismiss, and Tab to leave. Only selected option values are saved. The illustrated manual documents both workflows.

@@ -18,7 +18,9 @@ from sqlalchemy.orm import Session
 
 from .auth import require_permission
 from .database import get_db
-from .models import AuditEvent, LookupOption, QueueToken, User
+from pydantic import BaseModel
+
+from .models import AppSetting, AuditEvent, LookupOption, QueueToken, User
 from .schemas import ReportClassification, TokenRead
 
 COLUMNS = [
@@ -43,8 +45,96 @@ CLASSIFICATION_LOOKUPS = {
     'family_relationship': [('spouse', 'Spouse'), ('child', 'Child'), ('parent', 'Parent'), ('other', 'Other dependent')],
 }
 RANK_GROUPS = dict.fromkeys(['brigadier_general', 'colonel', 'lieutenant_colonel', 'major', 'captain', 'lieutenant', 'officer'], 'officer')
-RANK_GROUPS.update(warrant_officer='jco', jco='jco', sergeant='or', corporal='or', shoinik='or', soldier='or')
+RANK_GROUPS.update(afns='officer', cadet='cadet', nce='nce', warrant_officer='jco', jco='jco', sergeant='or', corporal='or', shoinik='or', soldier='or')
 router = APIRouter(prefix='/api/v1', tags=['Monthly MRI summary'])
+
+
+MAPPING_KEY = 'mri_summary_mapping'
+
+
+def mapping_rows(db):
+    options = list(db.scalars(select(LookupOption).where(
+        LookupOption.category.in_([*CLASSIFICATION_LOOKUPS, 'rank_relationship']),
+        LookupOption.is_active.is_(True),
+    ).order_by(LookupOption.sort_order, LookupOption.label)))
+
+    def labels(category):
+        grouped = {}
+        for option in options:
+            if option.category == category:
+                code = (option.metadata_json or {}).get('report_code', option.value)
+                grouped.setdefault(code, []).append(option.label)
+        return {code: ' / '.join(names) for code, names in grouped.items()}
+
+    people, statuses, entitlements = (labels(category) for category in
+                                      ('beneficiary_type', 'service_status', 'entitlement'))
+    rows = [{'key': key, 'label': f'Entitlement: {entitlements[key]}', 'default_category': key}
+            for key in ('re', 'cne') if key in entitlements]
+    for person in ('self', 'family'):
+        if person not in people:
+            continue
+        if 'civil' in entitlements:
+            rows.append({'key': f'civil:{person}', 'label': f"{entitlements['civil']} · {people[person]}",
+                         'default_category': 'family_civil' if person == 'family' else 'serving_civil'})
+        if 'military' not in entitlements:
+            continue
+        for status in ('serving', 'retired'):
+            if status not in statuses:
+                continue
+            prefix = f"{entitlements['military']} · {people[person]} · {statuses[status]}"
+            suffix = ' (sponsor)' if person == 'family' else ''
+            for group, label in GROUPS:
+                rows.append({'key': f'military:{person}:{status}:{group}',
+                             'label': f'{prefix} · {label}{suffix}',
+                             'default_category': default_military_category(person, status, group)})
+            for rank in options:
+                if rank.category == 'rank_relationship':
+                    rows.append({'key': f'rank:{person}:{status}:{rank.value}',
+                                 'label': f'{prefix} · {rank.label}{suffix}',
+                                 'default_category': '__inherit__'})
+    return rows
+
+
+def configured_category(db, key, default):
+    setting = db.get(AppSetting, MAPPING_KEY)
+    category = setting.value.get(key, default) if setting else default
+    return default if category == '__inherit__' else category
+
+
+def mapping_response(db):
+    setting = db.get(AppSetting, MAPPING_KEY)
+    saved = setting.value if setting else {}
+    return {'rows': [{**row, 'category': saved.get(row['key'], row['default_category'])} for row in mapping_rows(db)],
+            'columns': [{'key': key, 'label': f'{group} · {label}' if group else label} for key, group, label in COLUMNS]}
+
+
+class MappingUpdate(BaseModel):
+    mappings: dict[str, str | None]
+
+
+@router.get('/mri-summary-mapping')
+def get_mapping(db: Session = Depends(get_db), _user: User = Depends(require_permission('settings.manage'))):
+    return mapping_response(db)
+
+
+@router.put('/mri-summary-mapping')
+def save_mapping(payload: MappingUpdate, db: Session = Depends(get_db), user: User = Depends(require_permission('settings.manage'))):
+    valid_keys = {row['key'] for row in mapping_rows(db)}
+    valid_categories = {key for key, _, _ in COLUMNS} | {None}
+    if set(payload.mappings) != valid_keys:
+        raise HTTPException(409, 'Dropdown options changed. Review the refreshed mappings and save again.')
+    if any(value not in valid_categories and not (key.startswith('rank:') and value == '__inherit__') for key, value in payload.mappings.items()):
+        raise HTTPException(422, 'Provide every mapping with a valid report category or Needs review')
+    setting = db.get(AppSetting, MAPPING_KEY)
+    previous = setting.value if setting else {}
+    if not setting:
+        setting = AppSetting(key=MAPPING_KEY, description='MRI summary classification mapping', value={})
+        db.add(setting)
+    setting.value = {**previous, **payload.mappings}
+    db.add(AuditEvent(action='mri_summary.mapping_updated', actor=user.username,
+                      detail={'previous': previous, 'changes': payload.mappings}))
+    db.commit()
+    return mapping_response(db)
 
 
 def classify(db: Session, payload) -> str | None:
@@ -60,14 +150,14 @@ def classify(db: Session, payload) -> str | None:
             raise HTTPException(422, f'Unknown or inactive {field.replace("_", " ")}')
         values[field] = (option.metadata_json or {}).get('report_code', value)
     if values['entitlement'] in ('re', 'cne'):
-        return values['entitlement']
+        return configured_category(db, values['entitlement'], values['entitlement'])
     person = values['beneficiary_type']
     if person not in ('self', 'family'):
         return None
     if person == 'family' and not values['family_relationship']:
         raise HTTPException(422, 'Select the family relationship')
     if values['entitlement'] == 'civil':
-        return 'family_civil' if person == 'family' else 'serving_civil'
+        return configured_category(db, f'civil:{person}', 'family_civil' if person == 'family' else 'serving_civil')
     if values['entitlement'] != 'military':
         return None
     rank = payload.sponsor_rank if person == 'family' else getattr(payload, 'rank', None)
@@ -76,6 +166,12 @@ def classify(db: Session, payload) -> str | None:
         raise HTTPException(422, 'Select an active sponsor rank for a military family patient')
     group = (option.metadata_json or {}).get('report_group') if option else None
     status = values['service_status']
+    key = f'military:{person}:{status}:{group}'
+    fallback = configured_category(db, key, default_military_category(person, status, group))
+    return configured_category(db, f'rank:{person}:{status}:{rank}', fallback) if option and status in ('serving', 'retired') else fallback
+
+
+def default_military_category(person, status, group):
     if status == 'retired':
         if group == 'officer':
             return 'retired_officer'

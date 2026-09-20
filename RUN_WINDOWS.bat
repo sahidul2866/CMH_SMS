@@ -98,15 +98,15 @@ if "!NEW_DATABASE!"=="1" (
         popd
         goto :failed
     )
-    >"%SETUP_DIR%\database.seeded" echo Seeded on %DATE% %TIME%
-) else if not exist "%SETUP_DIR%\database.seeded" (
+    >"%SETUP_DIR%\database.users-v2.seeded" echo Seeded on %DATE% %TIME%
+) else if not exist "%SETUP_DIR%\database.users-v2.seeded" (
     echo       Existing database found; loading missing baseline seed data once...
     "%VENV_PYTHON%" -m app.seed
     if errorlevel 1 (
         popd
         goto :failed
     )
-    >"%SETUP_DIR%\database.seeded" echo Seeded on %DATE% %TIME%
+    >"%SETUP_DIR%\database.users-v2.seeded" echo Seeded on %DATE% %TIME%
 ) else (
     echo       Database already exists and is seeded - preserving its data.
 )

@@ -8,6 +8,9 @@ export class QueueApiService {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = '/api/v1';
 
+  summaryMapping() { return this.http.get<{rows: {key: string; label: string; category: string | null; default_category: string | null}[]; columns: {key: string; label: string}[]}>(`${this.baseUrl}/mri-summary-mapping`); }
+  saveSummaryMapping(mappings: Record<string, string | null>) { return this.http.put(`${this.baseUrl}/mri-summary-mapping`, {mappings}); }
+
   login(username: string, password: string) {
     return this.http.post<AuthUser>(`${this.baseUrl}/auth/login`, { username, password });
   }
@@ -95,10 +98,10 @@ export class QueueApiService {
   }
 
   report() { return this.http.get<QueueReport>(`${this.baseUrl}/reports/queue-summary`); }
-  dashboardPatients(status: string) { return this.http.get<QueueToken[]>(`${this.baseUrl}/dashboard/patients`, { params: { status } }); }
+  dashboardPatients(status: string, priority = 'all') { return this.http.get<QueueToken[]>(`${this.baseUrl}/dashboard/patients`, { params: { status, priority } }); }
   availablePatients(doctorId: string) { return this.http.get<QueueToken[]>(`${this.baseUrl}/doctors/${doctorId}/available-patients`); }
   claimPatient(doctorId: string, tokenId: string) { return this.http.post<QueueToken>(`${this.baseUrl}/doctors/${doctorId}/claim/${tokenId}`, {}); }
-  dashboard() { return this.http.get<RadiographyDashboard>(`${this.baseUrl}/dashboard`); }
+  dashboard(priority = 'all') { return this.http.get<RadiographyDashboard>(`${this.baseUrl}/dashboard`, {params: {priority}}); }
   monthlySummary(params: Record<string, string>) { return this.http.get<MonthlySummary>(`${this.baseUrl}/reports/mri-summary`, { params }); }
   summaryPatients(params: Record<string, string>) { return this.http.get<QueueToken[]>(`${this.baseUrl}/reports/mri-summary/patients`, { params }); }
   summaryExport(format: 'xlsx' | 'pdf', params: Record<string, string>) { return this.http.get(`${this.baseUrl}/reports/mri-summary.${format}`, { params, responseType: 'blob' }); }

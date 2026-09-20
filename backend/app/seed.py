@@ -5,13 +5,14 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy import delete, func, inspect, select
 
-from .auth import hash_password
+from .auth import LEGACY_ROLE_PERMISSIONS, hash_password
 from .database import SessionLocal
 from .models import (
     AppSetting,
     Doctor,
     LookupOption,
     QueueToken,
+    RoleDefinition,
     ScheduleSlot,
     User,
     WaitingRoom,
@@ -73,6 +74,9 @@ LOOKUPS = {
         ("corporal", "Corporal"),
         ("shoinik", "Shoinik / Sainik"),
         ("vip", "VIP"),
+        ("afns", "AFNS"),
+        ("cadet", "Officer / Nursing cadet"),
+        ("nce", "NCE"),
         ("officer", "Officer"),
         ("jco", "JCO"),
         ("soldier", "Soldier"),
@@ -137,6 +141,12 @@ def seed() -> None:
                 )
             )
         db.flush()
+        for name, permissions in LEGACY_ROLE_PERMISSIONS.items():
+            ensure(RoleDefinition(name=name, display_name=name.replace('_', ' ').title(),
+                                  access_profile='auditor' if name == 'radiography_head' else name,
+                                  permissions=sorted(permissions), is_system=True,
+                                  description='Built-in role'))
+        db.flush()
         admin_username = os.getenv("CMH_SMS_ADMIN_USERNAME", "admin").lower()
         admin_password = os.getenv("CMH_SMS_ADMIN_PASSWORD")
         admin = db.scalar(select(User).where(User.username == admin_username))
@@ -146,10 +156,24 @@ def seed() -> None:
                     username=admin_username,
                     full_name=os.getenv("CMH_SMS_ADMIN_NAME", "CMH System Administrator"),
                     password_hash=hash_password(admin_password),
+                    must_change_password=True,
                     role="admin",
                     is_active=True,
                 )
             )
+        db.flush()
+        # Initial credentials are supplied by deployment; existing accounts are never reset.
+        staff_password = os.getenv('CMH_SMS_SEED_USER_PASSWORD') or admin_password
+        if staff_password:
+            accounts = [(name, name.replace('_', ' ').title(), name, None)
+                        for name in ('reception', 'radiography_head', 'auditor', 'display')]
+            accounts += [('radiographer' if index == 0 else f'radiographer{index + 1}',
+                          doctor[1], 'radiographer', doctor[0]) for index, doctor in enumerate(DOCTORS)]
+            for username, full_name, role, doctor_id in accounts:
+                if not db.scalar(select(User).where(User.username == username)):
+                    db.add(User(username=username, full_name=full_name, role=role, doctor_id=doctor_id,
+                                password_hash=hash_password(staff_password), must_change_password=True, is_active=True))
+        db.flush()
         ensure(
             AppSetting(
                 key="display",
@@ -181,8 +205,12 @@ def seed() -> None:
                     select(LookupOption).where(LookupOption.category == category, LookupOption.value == value)
                 )
                 metadata = {"weight": sort_order} if category == "priority_category" else {}
+                if category == "rank_relationship":
+                    from .monthly_report import RANK_GROUPS
+                    if value in RANK_GROUPS:
+                        metadata["report_group"] = RANK_GROUPS[value]
                 if category == "rank_relationship" and value in {"brigadier_general", "vip"}:
-                    metadata = {"priority": "vip"}
+                    metadata["priority"] = "vip"
                 if not item:
                     db.add(
                         LookupOption(
