@@ -45,13 +45,16 @@ bash run.sh
 Windows users can alternatively double-click `RUN_WINDOWS.bat`. On Windows,
 `run.sh` automatically delegates to that native launcher. `RUN_WINDOWS.bat` is
 the recommended one-command installer: it can install Python and optional
-eSpeak NG through WinGet, uses the bundled prebuilt frontend, creates the initial administrator and local database,
-configures private-LAN firewall access, builds the UI, and starts the server.
+eSpeak NG through WinGet, uses the bundled prebuilt frontend, provisions the local PostgreSQL service, application role and database, creates the initial administrator,
+configures private-LAN firewall access and starts the server. Build the frontend
+from source with `cd frontend`, `npm ci`, and `npm run build` before running the
+Windows launcher. PostgreSQL installation prompts for its administrator password;
+the application connection is saved in `.setup\postgres.json`.
 The initial login is printed once and saved in
 `.setup\INITIAL_ADMIN_LOGIN.txt` on that Windows PC.
 
-The launcher creates the project-local Python environment, installs dependencies, runs every migration, loads idempotent seed data, builds the UI and starts the combined server.
-It builds the frontend and serves the frontend, API and WebSocket from one LAN-visible process. If port `8100` is already occupied, it stops the listening process before launching the project.
+The launchers create the project-local Python environment, install dependencies, run every migration, load idempotent seed data and start the combined server.
+The frontend, API and WebSocket are served from one LAN-visible process. The Windows launcher uses the frontend build prepared above; `run.sh` builds it on macOS/Linux. On Windows, if port `8100` is already occupied, the launcher stops with an error so you can identify and stop the existing service.
 
 - Application: `http://SERVER-PC-IP:8100`
 - API: `http://SERVER-PC-IP:8100/api/v1`

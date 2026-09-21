@@ -8,7 +8,7 @@ set "FRONTEND_DIR=%PROJECT_DIR%frontend"
 set "VENV_DIR=%BACKEND_DIR%\.venv"
 set "SETUP_DIR=%PROJECT_DIR%.setup"
 set "WINDOWS_ENV=%SETUP_DIR%\windows.env.bat"
-set "DATABASE_FILE=%BACKEND_DIR%\data\cmh_sms.db"
+set "POSTGRES_HELPER=%PROJECT_DIR%scripts\windows_postgres.py"
 set "BACKEND_PORT=8100"
 
 echo.
@@ -40,7 +40,9 @@ if defined ESPEAK_EXE (
 )
 
 call :ensure_windows_config
+if errorlevel 1 goto :failed
 if not defined CMH_SMS_ADMIN_PASSWORD goto :failed
+call "%WINDOWS_ENV%"
 
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo [2/9] Creating standalone Python environment...
@@ -80,37 +82,14 @@ if not exist "%BACKEND_DIR%\data\models\mms-tts-ben\model.safetensors" (
     echo       Natural offline Bengali neural voice is already installed.
 )
 
-set "NEW_DATABASE=0"
-if not exist "%DATABASE_FILE%" set "NEW_DATABASE=1"
-
-echo [4/9] Checking database migrations...
-pushd "%BACKEND_DIR%"
-"%VENV_PYTHON%" -m alembic upgrade head
-if errorlevel 1 (
-    popd
-    goto :failed
-)
-
-if "!NEW_DATABASE!"=="1" (
-    echo       A new standalone database was created.
-    "%VENV_PYTHON%" -m app.seed
-    if errorlevel 1 (
-        popd
-        goto :failed
-    )
-    >"%SETUP_DIR%\database.users-v2.seeded" echo Seeded on %DATE% %TIME%
-) else if not exist "%SETUP_DIR%\database.users-v2.seeded" (
-    echo       Existing database found; loading missing baseline seed data once...
-    "%VENV_PYTHON%" -m app.seed
-    if errorlevel 1 (
-        popd
-        goto :failed
-    )
-    >"%SETUP_DIR%\database.users-v2.seeded" echo Seeded on %DATE% %TIME%
-) else (
-    echo       Database already exists and is seeded - preserving its data.
-)
-popd
+echo [4/9] Configuring PostgreSQL and applying database migrations...
+"%VENV_PYTHON%" "%POSTGRES_HELPER%" --setup
+if errorlevel 1 goto :failed
+"%VENV_PYTHON%" "%POSTGRES_HELPER%" alembic upgrade head
+if errorlevel 1 goto :failed
+echo       Loading missing baseline data while preserving existing accounts...
+"%VENV_PYTHON%" "%POSTGRES_HELPER%" app.seed
+if errorlevel 1 goto :failed
 
 if not exist "%FRONTEND_DIR%\dist\cmh-smart-serial\browser\index.html" if not exist "%FRONTEND_DIR%\dist\cmh-smart-serial\index.html" goto :frontend_missing
 echo [5/9] Prebuilt frontend is included - no Node.js installation required.
@@ -141,10 +120,11 @@ start "CMH Smart Serial - Server" "%PROJECT_DIR%START_BACKEND_WINDOWS.bat"
 
 echo [9/9] Waiting for the application to become ready...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ok=$false; for($i=0;$i -lt 60;$i++){ try { $r=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:%BACKEND_PORT%/api/v1/health' -TimeoutSec 2; if($r.StatusCode -eq 200){$ok=$true;break} } catch {}; Start-Sleep -Seconds 1 }; if(-not $ok){exit 1}"
+  "$ok=$false; for($i=0;$i -lt 60;$i++){ try { $r=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:%BACKEND_PORT%/api/v1/ready' -TimeoutSec 2; if($r.StatusCode -eq 200){$ok=$true;break} } catch {}; Start-Sleep -Seconds 1 }; if(-not $ok){exit 1}"
 if errorlevel 1 (
-    echo WARNING: Backend did not report ready within 60 seconds.
-    echo Check the Backend window for an error.
+    echo ERROR: Backend did not report database readiness within 60 seconds.
+    echo Check the Server window for an error.
+    goto :failed
 ) else (
     echo Backend is ready.
 )
@@ -190,6 +170,7 @@ exit /b 0
 where winget >nul 2>&1 || exit /b 0
 echo Python 3.12 was not found. Installing it with winget...
 winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements --silent
+set "PATH=%LocalAppData%\Programs\Python\Python312;%LocalAppData%\Programs\Python\Python312\Scripts;%PATH%"
 call :find_python
 exit /b 0
 
@@ -289,7 +270,7 @@ goto :failed
 
 :frontend_missing
 echo ERROR: The prebuilt frontend is missing from this package.
-echo Download and extract the latest CMH_SMS_Windows.zip, then run again.
+echo From the frontend folder run npm ci and npm run build, then run this launcher again.
 goto :failed
 
 :failed

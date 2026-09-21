@@ -1,384 +1,123 @@
-# CMH Smart Serial — Windows Setup Guide
+# CMH Smart Serial — Windows source setup
 
-This guide installs the standalone CMH Smart Serial application on a new Windows 10/11 computer and creates a fresh local database. The application does not require the HMS project or its database.
+The Windows source launcher uses **PostgreSQL as the primary database**. It does
+not fall back to SQLite when PostgreSQL is unavailable.
 
-## Automatic installation (recommended)
+## New Windows PC
 
-Place the project on the new PC, open the `CMH_SMS` folder, and double-click:
+1. Copy or clone the source into `C:\CMH\CMH_SMS`. For a fresh installation,
+   exclude `.env`, `.setup`, `backend\.venv`, `backend\data`,
+   `frontend\node_modules`, and development caches from the old PC. This does
+   not transfer existing patient records.
+2. Install Python 3.12 (enable Add Python to PATH) and Node.js 22 LTS. The launcher
+   can attempt Python installation through WinGet if Python is missing.
+3. Build the current frontend in Command Prompt:
 
-```text
+   ```bat
+   cd /d C:\CMH\CMH_SMS\frontend
+   npm ci
+   npm run build
+   ```
+
+   Keep `frontend\dist`: the launcher serves this build and does not build it.
+4. Right-click `RUN_WINDOWS.bat` and choose **Run as administrator**. Keep internet
+   connected for dependency, PostgreSQL and voice-model downloads.
+5. If PostgreSQL is missing, setup opens its installer through WinGet. Use port
+   **5432**, install the database server, and remember the `postgres` administrator
+   password. Enter that password at the launcher's hidden password prompt. For an
+   existing local installation, enter its existing administrator password.
+
+The launcher configures the PostgreSQL Windows service for automatic startup,
+creates a restricted login named `cmh_sms` with a generated password, creates the
+`cmh_sms` database owned by that login, applies all Alembic migrations, and seeds
+missing initial configuration/accounts. Existing roles, passwords and records
+are preserved. The PostgreSQL administrator password is not saved.
+
+The application connection is saved in `.setup\postgres.json`, restricted to the
+setup account, SYSTEM and local administrators. Initial application credentials
+are saved in `.setup\INITIAL_ADMIN_LOGIN.txt`. Keep `.setup` private and retain it
+on this PC for subsequent launches. The root `.env` is not loaded by the Windows
+source launcher.
+
+Open `http://127.0.0.1:8100` and sign in. Keep the Server window open.
+Check `http://127.0.0.1:8100/api/v1/ready` for database readiness.
+
+## Existing or remote PostgreSQL database
+
+To use an existing database instead of provisioning the default local instance,
+set its URL in the Command Prompt used to launch setup:
+
+```bat
+cd /d C:\CMH\CMH_SMS
+set "CMH_SMS_DATABASE_URL=postgresql+psycopg://APP_USER:URL_ENCODED_PASSWORD@DB_HOST:5432/DB_NAME"
 RUN_WINDOWS.bat
 ```
 
-If you prefer Git Bash, MSYS2, or Cygwin, run the same launcher through
-`run.sh`:
+The database and login must already exist and the login must have permission to
+run migrations. URL-encode special characters in credentials. Setup verifies and
+saves the connection, skips local PostgreSQL installation/provisioning, and uses
+it for migrations, seeding, normal startup and automatic startup. Prefer using
+`.setup\postgres.json` for subsequent launches; an explicit environment URL takes
+precedence. SQLite URLs are rejected.
 
-```bash
-bash run.sh
+Existing SQLite files are never deleted or imported automatically. If setup
+finds an old SQLite database without a saved PostgreSQL configuration, it stops.
+Arrange migration of its records, then explicitly select the PostgreSQL URL.
+Creating a new PostgreSQL database does not transfer records from another PC.
+
+## Subsequent runs and automatic startup
+
+Run `RUN_WINDOWS.bat` again. It applies pending migrations and idempotent seed
+updates using the saved PostgreSQL connection. Rebuild with `npm run build` after
+frontend source changes.
+
+After setup succeeds, run `INSTALL_AUTOSTART_WINDOWS.bat` as administrator under
+the same Windows account used for setup. It starts the server at that user's
+login, restarts it after crashes, and disables AC sleep/hibernation. Keep the user
+signed in for Windows audio; lock with `Win+L` instead of signing out.
+`UNINSTALL_AUTOSTART_WINDOWS.bat` removes the scheduled task without deleting data.
+
+PostgreSQL runs as a separate Windows service. Closing the application does not
+stop the database service.
+
+## LAN and announcements
+
+On other PCs on the same private LAN, open `http://SERVER-PC-IP:8100`, using the
+address printed by the launcher. Only the server needs this codebase. The launcher
+adds a private-network inbound TCP 8100 firewall rule when run as administrator.
+Use a static address or DHCP reservation for the server.
+
+Connect speakers/the PA to the server. Setup attempts eSpeak NG installation and
+downloads the offline Bengali voice model. Check `/api/v1/health` for
+`audio.ready` and `audio.bangla_supported`.
+
+## PostgreSQL backup
+
+Use PostgreSQL's `pg_dump`, not a copy of `backend\data\cmh_sms.db`. For the default
+local setup, use the application password stored in `.setup\postgres.json`:
+
+```bat
+"C:\Program Files\PostgreSQL\17\bin\pg_dump.exe" -h 127.0.0.1 -p 5432 -U cmh_sms -W -F c -f "D:\CMH-Backups\cmh_sms.dump" cmh_sms
 ```
 
-The launcher installs missing Python and optional eSpeak NG prerequisites with
-`winget`, creates the local Python environment, installs changed dependencies,
-creates and migrates the database, creates the initial administrator, builds the
-uses the bundled prebuilt frontend, configures a private-network firewall rule, starts one LAN-visible
-server, waits for readiness, and opens the application.
-
-On the first run, note the administrator password printed in the launcher. A
-copy is stored locally at `.setup\INITIAL_ADMIN_LOGIN.txt`. The launcher never
-resets an existing administrator or database.
-
-It is safe to run repeatedly. Completed steps are skipped, existing database data is preserved, and only pending database migrations are applied.
-
-## Keep the server running automatically
-
-After `RUN_WINDOWS.bat` completes successfully once, right-click
-`INSTALL_AUTOSTART_WINDOWS.bat` and choose **Run as administrator**. It creates
-an unlimited Task Scheduler job for the current staff account, disables AC
-sleep/hibernation, starts the server at every login, and restarts it after a
-crash.
-
-The scheduled job deliberately runs in the signed-in user's interactive
-session rather than as a Windows service. This is required for announcements to
-play through the Windows sound output. Keep that staff account signed in and
-lock the screen with `Win+L` instead of signing out.
-
-To remove automatic startup without deleting data, run
-`UNINSTALL_AUTOSTART_WINDOWS.bat`.
-
-## Build the shareable installer EXE
-
-On one internet-connected Windows build PC, run:
-
-```text
-BUILD_WINDOWS_INSTALLER.bat
-```
-
-The build downloads the offline Bengali model when necessary, freezes FastAPI,
-Uvicorn, Python and all dependencies with PyInstaller, and compiles an Inno
-Setup installer. The result is:
-
-```text
-installer-output\CMH-Smart-Serial-Setup.exe
-```
-
-Only that installer EXE needs to be shared with hospital PCs. Target PCs do not
-need Python, Node.js, npm, source code or internet. Application data and the
-database are stored under `C:\ProgramData\CMH Smart Serial`, outside the
-installation folder, so upgrades and uninstall/reinstall cycles do not erase
-operational records.
-
-The remaining sections document the same process manually for troubleshooting or controlled installation.
-
-## 1. Install the prerequisites
-
-Open **PowerShell as Administrator** and install Python, Node.js, and Git using `winget`:
-
-```powershell
-winget install --id Python.Python.3.12 -e
-winget install --id OpenJS.NodeJS.LTS -e
-winget install --id Git.Git -e
-```
-
-The automatic launcher installs eSpeak NG when possible. For a manual setup,
-install it with:
-
-```powershell
-winget install --id eSpeak-NG.eSpeak-NG -e
-```
-
-Keep the default installation directory (`C:\Program Files\eSpeak NG`) so the
-application can find it automatically. This supplies the complete personalized
-Bangla and English fallback announcements without internet access.
-
-The recommended higher-quality option is the offline Bengali neural voice. On
-the first run, the launcher installs its runtime and downloads Meta's
-`facebook/mms-tts-ben` model into `backend\data\models\mms-tts-ben`. After that
-download, generation is entirely local. Select **Offline neural** under
-**Settings → Queue & display → Announcement**, save, and use **Test selected
-voice**. The model is licensed CC BY-NC 4.0 and is included here only for the
-hospital's non-commercial internal deployment; see `THIRD_PARTY_MODELS.md`.
-
-Close PowerShell, open it again, and confirm the installations:
-
-```powershell
-py -3.12 --version
-node --version
-npm --version
-git --version
-```
-
-Expected minimum versions:
-
-- Python 3.11+
-- Node.js 20+
-- npm 10+
-
-## 2. Copy or clone the project
-
-Place the project in a simple path without unusual characters, for example:
-
-```text
-C:\CMH\CMH_SMS
-```
-
-If using Git:
-
-```powershell
-New-Item -ItemType Directory -Force C:\CMH
-Set-Location C:\CMH
-git clone <repository-url> CMH_SMS
-Set-Location C:\CMH\CMH_SMS
-```
-
-If the folder was copied using a USB drive or shared folder:
-
-```powershell
-Set-Location C:\CMH\CMH_SMS
-```
-
-Do not copy these generated folders from another computer:
-
-```text
-backend\.venv
-frontend\node_modules
-frontend\dist
-frontend\.angular
-```
-
-## 3. Create the backend environment
-
-Run from the `CMH_SMS` project directory:
-
-```powershell
-py -3.12 -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install --upgrade pip
-backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-```
-
-The environment belongs only to this standalone project.
-
-## 4. Create and migrate a new database
-
-The default Windows installation uses an independent SQLite database at:
-
-```text
-backend\data\cmh_sms.db
-```
-
-Create the database and all tables by running the Alembic migrations:
-
-```powershell
-Set-Location backend
-.venv\Scripts\python.exe -m alembic upgrade head
-```
-
-Load the initial CMH configuration and demonstration data:
-
-```powershell
-.venv\Scripts\python.exe -m app.seed
-```
-
-Confirm the installed migration:
-
-```powershell
-.venv\Scripts\python.exe -m alembic current
-```
-
-Expected result:
-
-```text
-20260818_0013 (head)
-```
-
-The seed command is idempotent. Running it again updates system configuration and demo data without duplicating the daily demonstration queue.
-
-Return to the project directory:
-
-```powershell
-Set-Location ..
-```
-
-## 5. Install the frontend
-
-```powershell
-Set-Location frontend
-npm ci
-Set-Location ..
-```
-
-## 6. Build and start the application
-
-Build the frontend once:
-
-```powershell
-Set-Location C:\CMH\CMH_SMS\frontend
-npm run build
-```
-
-Start the combined server:
-
-```powershell
-Set-Location C:\CMH\CMH_SMS\backend
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8100
-```
-
-Wait for:
-
-```text
-Application startup complete.
-```
-
-Open these addresses in Chrome or Edge:
-
-- Application on server: <http://127.0.0.1:8100>
-- Application on wired clients: `http://SERVER-PC-IP:8100`
-- API health: <http://127.0.0.1:8100/api/v1/health>
-- API documentation: <http://127.0.0.1:8100/docs>
-
-Press `Ctrl+C` to stop the server.
-
-## 7. Free occupied ports
-
-If port `8100` is already in use, open PowerShell as Administrator and identify the listening process:
-
-```powershell
-Get-NetTCPConnection -State Listen -LocalPort 8100 |
-    Select-Object LocalPort, OwningProcess
-```
-
-Inspect a process before stopping it:
-
-```powershell
-Get-Process -Id <PID>
-```
-
-Stop only the confirmed process:
-
-```powershell
-Stop-Process -Id <PID> -Force
-```
-
-Then start the combined server again.
-
-## 8. Verify the new database
-
-With the backend running, verify:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8100/api/v1/health
-Invoke-RestMethod http://127.0.0.1:8100/api/v1/doctors
-Invoke-RestMethod http://127.0.0.1:8100/api/v1/waiting-rooms
-```
-
-The seed should provide:
-
-- Four shared waiting rooms
-- Four doctors
-- Queue, display, and announcement settings
-- Realistic demonstration tokens
-
-In the health response, confirm:
-
-```text
-audio.ready: true
-audio.bangla_supported: true
-```
-
-## 9. Run automated checks
-
-Backend tests:
-
-```powershell
-Set-Location C:\CMH\CMH_SMS\backend
-.venv\Scripts\python.exe -m pytest -q
-```
-
-Frontend production build:
-
-```powershell
-Set-Location C:\CMH\CMH_SMS\frontend
-npm run build
-```
-
-## 10. Database backup and reset
-
-### Back up the database
-
-Stop the backend and copy:
-
-```text
-backend\data\cmh_sms.db
-```
-
-Example:
-
-```powershell
-Copy-Item backend\data\cmh_sms.db "D:\CMH-Backups\cmh_sms-$(Get-Date -Format yyyyMMdd-HHmm).db"
-```
-
-### Create a completely fresh database
-
-This deletes local application data. First stop the backend and make a backup. Then:
-
-```powershell
-Remove-Item backend\data\cmh_sms.db
-Set-Location backend
-.venv\Scripts\python.exe -m alembic upgrade head
-.venv\Scripts\python.exe -m app.seed
-```
-
-## 11. Windows Firewall
-
-The server must accept TCP port `8100` from the wired CMH subnet. In an
-Administrator PowerShell window, replace the example subnet with the address
-range approved by CMH ICT:
-
-```powershell
-New-NetFirewallRule -DisplayName "CMH Smart Serial LAN" `
-  -Direction Inbound -Protocol TCP -LocalPort 8100 `
-  -RemoteAddress 192.168.50.0/24 -Action Allow -Profile Domain,Private
-```
-
-Do not create an unrestricted Public-profile rule. CMH ICT should assign a
-static/DHCP-reserved server address and restrict the switch VLAN and firewall to
-the radiographer and reception PCs.
+Create the backup directory first; adjust the executable path for your installed
+PostgreSQL version. Keep backups outside the project and verify restores.
 
 ## Troubleshooting
 
-### `py -3.12` is not recognized
+- **No WinGet:** install PostgreSQL manually from the official Windows installer,
+  then rerun setup as administrator.
+- **Connection failure:** check PostgreSQL in Windows Services, port 5432, the
+  saved connection, and credentials. Setup stops instead of using SQLite.
+- **Existing `cmh_sms` role with a different password:** provide its correct
+  application connection through `CMH_SMS_DATABASE_URL`; setup does not reset it.
+- **Multiple PostgreSQL services/non-default port:** supply the intended existing
+  database URL explicitly.
+- **Missing frontend:** run `npm ci` and `npm run build` in `frontend`.
+- **Port 8100 occupied:** stop the confirmed existing app before relaunching.
 
-Restart PowerShell after installing Python. If it still fails, reinstall Python and enable **Add Python to PATH**.
+This launcher defaults to development HTTP settings. For approved production
+HTTPS/cookie/host settings, see the production section in `README.md`.
 
-### PowerShell cannot find the virtual environment
-
-Confirm that the current directory is `C:\CMH\CMH_SMS` before creating it and that this file exists:
-
-```text
-backend\.venv\Scripts\python.exe
-```
-
-### `npm` is not recognized
-
-Restart PowerShell after installing Node.js. Confirm with `node --version` and `npm --version`.
-
-### A wired client reports that the API is unavailable
-
-On the server, confirm:
-
-```text
-http://127.0.0.1:8100/api/v1/health
-```
-
-Then confirm the client can ping the server IP and open
-`http://SERVER-PC-IP:8100/api/v1/health`. Never use `localhost` on a client PC.
-Check the Cat6 link light, switch/VLAN assignment, Windows firewall scope and
-server IP reservation.
-
-### Migration fails
-
-Make sure the command is executed inside the `backend` directory using the project-local Python executable:
-
-```powershell
-Set-Location C:\CMH\CMH_SMS\backend
-.venv\Scripts\python.exe -m alembic upgrade head
-```
+The separate frozen EXE installer under `packaging/windows` has its own database
+bootstrap and is not the PostgreSQL source deployment documented here.

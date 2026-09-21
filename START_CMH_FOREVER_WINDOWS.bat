@@ -13,6 +13,8 @@ if not exist "%WINDOWS_ENV%" goto :not_installed
 if not exist "%PROJECT_DIR%frontend\dist\cmh-smart-serial\browser\index.html" if not exist "%PROJECT_DIR%frontend\dist\cmh-smart-serial\index.html" goto :not_installed
 
 call "%WINDOWS_ENV%"
+"%VENV_PYTHON%" "%PROJECT_DIR%scripts\windows_postgres.py" --check
+if errorlevel 1 goto :not_installed
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ip=(Get-NetIPAddress -AddressFamily IPv4 ^| Where-Object {$_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown'} ^| Sort-Object InterfaceMetric ^| Select-Object -First 1 -ExpandProperty IPAddress); if($ip){$ip}else{''}"`) do set "LAN_IP=%%I"
 set "CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1"
 if defined LAN_IP set "CMH_SMS_ALLOWED_HOSTS=!CMH_SMS_ALLOWED_HOSTS!,!LAN_IP!"
@@ -20,7 +22,7 @@ if defined LAN_IP set "CMH_SMS_ALLOWED_HOSTS=!CMH_SMS_ALLOWED_HOSTS!,!LAN_IP!"
 :run
 echo [%DATE% %TIME%] Starting CMH Smart Serial...
 pushd "%BACKEND_DIR%"
-"%VENV_PYTHON%" -m uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT% --no-access-log
+"%VENV_PYTHON%" "%PROJECT_DIR%scripts\windows_postgres.py" uvicorn app.main:app --host 0.0.0.0 --port %BACKEND_PORT% --no-access-log
 set "SERVER_EXIT=!ERRORLEVEL!"
 popd
 echo [%DATE% %TIME%] Server exited with code !SERVER_EXIT!; restarting in 10 seconds.
