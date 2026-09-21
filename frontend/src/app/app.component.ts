@@ -3,7 +3,7 @@ import { Component, HostListener, OnDestroy, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Observable, Subscription, finalize, interval } from 'rxjs';
 
-import { MonthlySummary, PatientClassification, AppSetting, Appointment, AuditEvent, AuthUser, DashboardRoom, DeviceEndpoint, DisplayState, Doctor, Holiday, LookupOption, Patient, PermissionDefinition, QueueReport, QueueToken, RadiographyDashboard, RealtimeStatus, ReceptionReportRow, RoleDefinition, ScheduleSlot, SmsMessage, View, WaitingRoom } from './models';
+import { ReportCategoryOption, ClassificationUpdate, RegistrationFields, CustomRegistrationField, MonthlySummary, PatientClassification, AppSetting, Appointment, AuditEvent, AuthUser, DashboardRoom, DeviceEndpoint, DisplayState, Doctor, Holiday, LookupOption, Patient, PermissionDefinition, QueueReport, QueueToken, RadiographyDashboard, RealtimeStatus, ReceptionReportRow, RoleDefinition, ScheduleSlot, SmsMessage, View, WaitingRoom } from './models';
 import { QueueApiService } from './queue-api.service';
 import { ModalComponent } from './modal.component';
 import { SearchableSelectComponent } from './searchable-select.component';
@@ -82,6 +82,22 @@ export class AppComponent implements OnDestroy {
   classificationDraft: PatientClassification = {};
   classificationSaving = false;
   classificationError = '';
+  classificationLoading = false;
+  classificationReady = false;
+  classificationMode: 'direct' | 'inputs' = 'direct';
+  classificationCategory = '';
+  classificationColumns: ReportCategoryOption[] = [];
+  private classificationRequest?: Subscription;
+  readonly classificationKeys = ['beneficiary_type', 'entitlement', 'service_status', 'rank', 'sponsor_rank', 'family_relationship'];
+  get disabledClassificationFields(): string[] { return this.classificationKeys.filter(key => !this.fieldEnabled(key)); }
+  get selectedClassificationDescription(): string { return this.classificationColumns.find(column => column.key === this.classificationCategory)?.description || 'Needs review keeps this patient in the report total without assigning a category.'; }
+  summaryCategoryLabel(category: string | null | undefined): string {
+    return this.classificationColumns.find(column => column.key === category)?.label || this.summaryMappingColumns.find(column => column.key === category)?.label || category?.replaceAll('_', ' ') || 'Needs review';
+  }
+  classificationSavedValue(key: string): string {
+    const value = this.classificationTarget?.[key as keyof PatientClassification];
+    return this.lookupLabel(['rank', 'sponsor_rank'].includes(key) ? 'rank_relationship' : key, value) || 'Not recorded';
+  }
   lookupReportGroup = '';
   lookupReportCode = '';
   reportGroups = [{value: 'officer', label: 'Officers / AFNS'}, {value: 'cadet', label: 'Officer / Nursing cadet'}, {value: 'jco', label: 'JCO'}, {value: 'or', label: 'OR / Recruit'}, {value: 'nce', label: 'NCE'}];
@@ -127,13 +143,40 @@ export class AppComponent implements OnDestroy {
   }
   editClassification(patient: QueueToken): void {
     this.patientDetail = null; this.classificationTarget = patient; this.classificationError = '';
+    this.classificationMode = 'direct';
+    this.classificationCategory = patient.summary_category || (patient.summary_category_source === 'manual' ? '__review__' : '');
     this.classificationDraft = {rank: patient.rank || '', beneficiary_type: patient.beneficiary_type || '', service_status: patient.service_status || '', entitlement: patient.entitlement || '', sponsor_rank: patient.sponsor_rank || '', family_relationship: patient.family_relationship || ''};
+    this.loadClassificationOptions();
+  }
+  loadClassificationOptions(): void {
+    this.classificationRequest?.unsubscribe();
+    this.classificationLoading = true; this.classificationReady = false; this.classificationError = '';
+    this.classificationRequest = this.api.classificationOptions().subscribe({
+      next: data => {
+        this.applyRegistrationFields(data.registration);
+        const categories = new Set(data.lookups.map(option => option.category));
+        this.lookupOptions = [...this.lookupOptions.filter(option => !categories.has(option.category)), ...data.lookups];
+        this.classificationColumns = data.columns;
+        this.classificationLoading = false; this.classificationReady = true;
+      },
+      error: error => {
+        this.classificationLoading = false;
+        this.classificationError = this.apiErrorMessage(error, 'Could not load classification choices. Check the connection and try again.');
+      }
+    });
+  }
+  closeClassification(): void {
+    this.classificationRequest?.unsubscribe(); this.classificationTarget = null;
   }
   saveClassification(): void {
-    if (!this.classificationTarget) return;
-    this.classificationSaving = true;
-    this.api.correctClassification(this.classificationTarget.id, this.classificationDraft).subscribe({
-      next: patient => { this.classificationTarget = null; this.classificationSaving = false; this.patientDetail = patient; this.notify(patient.summary_category ? 'Report classification saved' : 'Saved · report category still needs review'); this.loadMonthlySummary(); this.loadReceptionReport(); this.refresh(); },
+    if (!this.classificationTarget || !this.classificationReady || this.classificationSaving) return;
+    if (this.classificationMode === 'direct' && !this.classificationCategory) { this.classificationError = 'Choose a report category or Needs review.'; return; }
+    this.classificationSaving = true; this.classificationError = '';
+    const payload: ClassificationUpdate = this.classificationMode === 'direct'
+      ? {mode: 'direct', summary_category: this.classificationCategory === '__review__' ? null : this.classificationCategory}
+      : {...this.enabledPayload(this.classificationDraft), mode: 'inputs'};
+    this.api.correctClassification(this.classificationTarget.id, payload).subscribe({
+      next: patient => { this.closeClassification(); this.classificationSaving = false; this.patientDetail = patient; this.notify(patient.summary_category ? 'Report classification saved' : 'Saved · report category still needs review'); this.loadMonthlySummary(); this.loadReceptionReport(); this.refresh(); },
       error: error => { this.classificationError = this.apiErrorMessage(error, 'Could not save classification.'); this.classificationSaving = false; }
     });
   }
@@ -208,9 +251,9 @@ export class AppComponent implements OnDestroy {
   settingIcon(key: string): string {
     return ({announcement: 'M11 4 5 9H2v6h3l6 5V4zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14', display: 'M3 4h18v13H3V4zm5 17h8m-4-4v4', queue: 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1'} as Record<string, string>)[key] || '';
   }
-  get requiredFieldCount(): number { return Object.values(this.requiredDraft).filter(Boolean).length; }
+  get requiredFieldCount(): number { return Object.values(this.requiredDraft).filter(Boolean).length + this.customDraft.filter(field => field.enabled && field.required).length; }
   get requiredFieldsChanged(): boolean {
-    return Object.keys(this.registrationFields).some(key => !!this.requiredDraft[key] !== this.requiredFields.includes(key));
+    return Object.keys(this.registrationFields).some(key => !!this.requiredDraft[key] !== this.requiredFields.includes(key) || !!this.enabledDraft[key] !== this.enabledFields.includes(key)) || JSON.stringify(this.customDraft) !== JSON.stringify(this.customFields);
   }
   get summaryMappingChangedCount(): number {
     return this.summaryMappingRows.filter(row => row.category !== this.summaryMappingSaved[row.key]).length;
@@ -228,21 +271,61 @@ export class AppComponent implements OnDestroy {
     return request.pipe(finalize(() => { this.settingsSaving = false; }));
   }
   requiredFields = ['patient_name'];
+  enabledFields: string[] = [];
+  registrationFieldsLoaded = false;
   registrationFields: Record<string, string> = {};
   requiredDraft: Record<string, boolean> = {};
-  loadRegistrationFields(): void {
-    this.api.registrationFields().subscribe({next: data => {this.requiredFields = data.required; this.registrationFields = data.fields; this.requiredDraft = Object.fromEntries(Object.keys(data.fields).map(key => [key, data.required.includes(key)]));}, error: () => this.message = 'Could not load registration requirements.'});
+  enabledDraft: Record<string, boolean> = {};
+  customFields: CustomRegistrationField[] = [];
+  customDraft: CustomRegistrationField[] = [];
+  customValues: Record<string, string | number | null> = {};
+  newCustomLabel = '';
+  newCustomType: CustomRegistrationField['type'] = 'text';
+  newCustomOptions = '';
+  private applyRegistrationFields(data: RegistrationFields): void {
+    this.requiredFields = data.required; this.enabledFields = data.enabled ?? Object.keys(data.fields);
+    this.registrationFields = data.fields; this.customFields = data.custom ?? [];
+    this.customDraft = JSON.parse(JSON.stringify(this.customFields));
+    this.requiredDraft = Object.fromEntries(Object.keys(data.fields).map(key => [key, data.required.includes(key)]));
+    this.enabledDraft = Object.fromEntries(Object.keys(data.fields).map(key => [key, this.enabledFields.includes(key)]));
+    this.registrationFieldsLoaded = true;
   }
+  loadRegistrationFields(): void {
+    this.registrationFieldsLoaded = false;
+    this.api.registrationFields().subscribe({next: data => this.applyRegistrationFields(data), error: () => this.message = 'Could not load patient field settings. Reopen the form to retry.'});
+  }
+  setFieldEnabled(key: string, enabled: boolean): void {
+    this.enabledDraft[key] = enabled;
+    if (!enabled) this.requiredDraft[key] = false;
+  }
+  addCustomField(): void {
+    const options = [...new Set(this.newCustomOptions.split('\n').map(value => value.trim()).filter(Boolean))];
+    if (!this.newCustomLabel.trim() || this.customDraft.length >= 50 || (this.newCustomType === 'select' && !options.length)) return;
+    this.customDraft.push({key: 'custom_' + Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16)).join(''), label: this.newCustomLabel.trim(), type: this.newCustomType, enabled: true, required: false, options});
+    this.newCustomLabel = ''; this.newCustomOptions = ''; this.newCustomType = 'text';
+  }
+  customOptionsChanged(field: CustomRegistrationField, value: string): void { field.options = value.split('\n'); }
   saveRequiredFields(): void {
     if (this.requiredFieldsBusy || !this.requiredFieldsChanged) return;
     this.requiredFieldsBusy = true;
     const required = Object.keys(this.requiredDraft).filter(key => this.requiredDraft[key]);
-    this.api.saveRegistrationFields(required).pipe(finalize(() => { this.requiredFieldsBusy = false; })).subscribe({
-      next: () => { this.requiredFields = required; this.notify('Required fields saved'); },
-      error: error => this.message = this.apiErrorMessage(error, 'Could not save requirements.')
+    const enabled = Object.keys(this.enabledDraft).filter(key => this.enabledDraft[key]);
+    this.api.saveRegistrationFields(required, enabled, this.customDraft).pipe(finalize(() => { this.requiredFieldsBusy = false; })).subscribe({
+      next: data => { this.applyRegistrationFields(data); this.notify('Patient field settings saved'); },
+      error: error => this.message = this.apiErrorMessage(error, 'Could not save patient field settings.')
     });
   }
-  fieldRequired(key: string): boolean { return this.requiredFields.includes(key); }
+  fieldEnabled(key: string): boolean { return this.registrationFieldsLoaded && this.enabledFields.includes(key); }
+  fieldRequired(key: string): boolean { return this.fieldEnabled(key) && this.requiredFields.includes(key); }
+  fieldApplicable(key: string): boolean {
+    const family = this.classificationCode('beneficiary_type', this.form.beneficiary_type) === 'family';
+    const military = this.classificationCode('entitlement', this.form.entitlement) === 'military';
+    return ({rank: !family, service_status: military, family_relationship: family, sponsor_rank: family && military} as Record<string, boolean>)[key] ?? true;
+  }
+  enabledPayload<T extends object>(draft: T): T {
+    return Object.fromEntries(Object.entries(draft).filter(([key]) => !(key in this.registrationFields) || this.fieldEnabled(key))) as T;
+  }
+  customFieldLabel(key: string): string { return this.customFields.find(field => field.key === key)?.label || key; }
   editingPatientId = '';
   occupancy: {id: string; name: string; room: string; occupied: boolean}[] = [];
   occupancyError = '';
@@ -276,6 +359,7 @@ export class AppComponent implements OnDestroy {
   editWaitingPatient(token: QueueToken): void {
     this.loadRegistrationFields();
     this.editingPatientId = token.id;
+    this.customValues = {...token.custom_fields};
     for (const key of Object.keys(this.form) as (keyof typeof this.form)[]) {
       (this.form as any)[key] = (token as any)[key] ?? (['age', 'contrast', 'film'].includes(key) ? null : '');
     }
@@ -284,6 +368,7 @@ export class AppComponent implements OnDestroy {
     this.message = ''; this.showReceptionModal = true;
   }
   openRegistration(): void {
+    this.customValues = {};
     this.loadRegistrationFields();
     if (this.editingPatientId) {
       for (const key of Object.keys(this.form)) (this.form as any)[key] = ['age', 'contrast', 'film'].includes(key) ? null : '';
@@ -400,6 +485,7 @@ export class AppComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.classificationRequest?.unsubscribe();
     this.refreshSubscription?.unsubscribe();
     this.realtimeSubscription?.unsubscribe();
     this.statusSubscription?.unsubscribe();
@@ -711,9 +797,11 @@ export class AppComponent implements OnDestroy {
 
   get missingTokenFields(): string[] {
     const missing: string[] = [];
+    if (!this.registrationFieldsLoaded) return ['Patient field settings are loading or unavailable'];
+    for (const field of this.customFields) { if (field.enabled && field.required && (this.customValues[field.key] === null || this.customValues[field.key] === undefined || String(this.customValues[field.key]).trim() === '')) missing.push(field.label); }
     if (this.form.patient_name.trim().length < 2) missing.push('patient name');
-    for (const key of this.requiredFields) { const value = (this.form as any)[key]; if (value === null || value === undefined || String(value).trim() === '') missing.push(this.registrationFields[key] || key); }
-    if ([this.form.age, this.form.contrast, this.form.film].some(value => value !== null && (!Number.isInteger(value) || value < 0)) || (this.form.age !== null && this.form.age > 150)) missing.push('valid age, contrast and film numbers');
+    for (const key of this.requiredFields.filter(key => this.fieldEnabled(key) && this.fieldApplicable(key))) { const value = (this.form as any)[key]; if (value === null || value === undefined || String(value).trim() === '') missing.push(this.registrationFields[key] || key); }
+    if ((['age', 'contrast', 'film'] as const).filter(key => this.fieldEnabled(key)).map(key => this.form[key]).some(value => value !== null && (!Number.isInteger(value) || value < 0)) || (this.fieldEnabled('age') && this.form.age !== null && this.form.age > 150)) missing.push('valid age, contrast and film numbers');
     return missing;
   }
 
@@ -805,8 +893,9 @@ export class AppComponent implements OnDestroy {
     }
     if (this.missingTokenFields.length) return;
     this.busy = true;
-    const payload = {
+    const payload = this.enabledPayload({
       ...this.form,
+      custom_fields: Object.fromEntries(Object.entries(this.customValues).filter(([key]) => this.customFields.some(field => field.key === key && field.enabled))),
       patient_title: this.form.patient_title || '',
       patient_name: patientName,
       patient_phone: this.form.patient_phone.trim(),
@@ -818,13 +907,14 @@ export class AppComponent implements OnDestroy {
       room_number: '',
       waiting_room: '',
       source: 'walk_in',
-    };
+    });
     const request = this.editingPatientId ? this.api.updateWaitingPatient(this.editingPatientId, payload) : this.api.createToken(payload);
     request.subscribe({
       next: (token) => {
         this.notify(`Patient ${this.editingPatientId ? 'updated' : 'added'} · ${token.serial_number || token.token_number}`);
-        this.form.beneficiary_type = this.form.service_status = this.form.entitlement = this.form.sponsor_rank = this.form.family_relationship =
+        this.form.beneficiary_type = this.form.service_status = this.form.entitlement = this.form.sponsor_rank = this.form.family_relationship = '';
         this.form.priority = 'normal';
+        this.customValues = {};
         this.form.patient_name = '';
         this.form.patient_phone = '';
         this.form.rank = '';
@@ -1061,9 +1151,10 @@ export class AppComponent implements OnDestroy {
   summaryMappingRows: {key: string; label: string; category: string | null; default_category: string | null}[] = [];
   summaryMappingColumns: {key: string; label: string}[] = [];
   summaryMappingSearch = '';
+  summaryMappingScope: 'all' | 'groups' | 'ranks' = 'groups';
   get visibleSummaryMappingRows() {
     const query = this.summaryMappingSearch.trim().toLowerCase();
-    return this.summaryMappingRows.filter(row => !query || row.label.toLowerCase().includes(query));
+    return this.summaryMappingRows.filter(row => (!query || row.label.toLowerCase().includes(query)) && (this.summaryMappingScope === 'all' || row.key.startsWith('rank:') === (this.summaryMappingScope === 'ranks')));
   }
   summaryMappingBusy = false;
   summaryMappingError = '';
@@ -1072,6 +1163,7 @@ export class AppComponent implements OnDestroy {
   loadSummaryMapping(): void {
     this.settingsTab = 'summary-mapping';
     this.summaryMappingSearch = '';
+    this.summaryMappingScope = 'groups';
     this.summaryMappingRows = [];
     this.summaryMappingSaved = {};
     this.syncSummaryMapping();

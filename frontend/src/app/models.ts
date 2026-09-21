@@ -53,8 +53,10 @@ export interface MonthlySummary {
 }
 
 export interface QueueToken extends PatientClassification {
+  custom_fields?: Record<string, string | number | null>;
   token_date?: string;
   summary_category?: string | null;
+  summary_category_source?: 'automatic' | 'manual';
   id: string;
   token_number: string;
   serial_number?: string | null;
@@ -168,3 +170,15 @@ export interface RealtimeEvent {
   occurred_at: string;
   display?: DisplayState;
 }
+
+export interface CustomRegistrationField {
+  key: string; label: string; type: 'text' | 'number' | 'date' | 'select';
+  enabled: boolean; required: boolean; options: string[];
+}
+export interface RegistrationFields {
+  fields: Record<string, string>; required: string[]; enabled: string[]; custom: CustomRegistrationField[];
+}
+
+export interface ReportCategoryOption { key: string; label: string; description: string; report_label: string; }
+export interface ClassificationOptions { columns: ReportCategoryOption[]; registration: RegistrationFields; lookups: LookupOption[]; }
+export interface ClassificationUpdate extends PatientClassification { mode: 'inputs' | 'direct'; summary_category?: string | null; }

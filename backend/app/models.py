@@ -15,6 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
 
 from .database import Base
 
@@ -97,6 +98,7 @@ class RegistrationCounter(Base):
 
 
 class QueueToken(Base):
+    custom_fields: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=dict, server_default="{}")
     __tablename__ = "queue_tokens"
     __table_args__ = (UniqueConstraint("token_date", "doctor_id", "sequence", name="uq_daily_doctor_sequence"),)
 
@@ -117,6 +119,7 @@ class QueueToken(Base):
     sponsor_rank: Mapped[str | None] = mapped_column(String(100), nullable=True)
     family_relationship: Mapped[str | None] = mapped_column(String(100), nullable=True)
     summary_category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    summary_category_source: Mapped[str] = mapped_column(String(20), nullable=False, default="automatic", server_default="automatic")
     patient_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     patient_title: Mapped[str | None] = mapped_column(String(30), nullable=True)
     patient_name: Mapped[str] = mapped_column(String(160), nullable=False)

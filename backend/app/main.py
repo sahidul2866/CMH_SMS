@@ -127,6 +127,8 @@ from .service import QueueService
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     validate_production_config()
+    from .database import refresh_sqlite_replica
+    refresh_sqlite_replica()
     with SessionLocal() as db:
         db.execute(delete(UserSession).where(UserSession.expires_at <= datetime.utcnow()))
         db.commit()
@@ -838,7 +840,7 @@ def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depen
     if token.status != "waiting":
         raise HTTPException(409, "Only waiting patients can be edited; refresh the queue")
     from .registration import validate_registration
-    validate_registration(db, payload)
+    payload = validate_registration(db, payload, existing=token)
     service = QueueService(db)
     for category, value in [("service_category", payload.service_category), ("priority_category", payload.priority), ("rank_relationship", payload.rank), ("patient_source", payload.patient_source)]:
         if value:
@@ -846,9 +848,10 @@ def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depen
             if category == "rank_relationship" and ((option.metadata_json or {}).get("priority") == "vip" or value.lower() == "vip"):
                 payload.priority = "vip"
     from .monthly_report import classify
-    fields = {"patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "beneficiary_type", "service_status", "entitlement", "sponsor_rank", "family_relationship"}
+    fields = {"custom_fields", "patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "beneficiary_type", "service_status", "entitlement", "sponsor_rank", "family_relationship"}
     changes = {key: value for key, value in payload.model_dump().items() if key in fields}
-    changes["summary_category"] = classify(db, payload)
+    if token.summary_category_source != "manual":
+        changes["summary_category"] = classify(db, payload)
     before = {key: getattr(token, key) for key in changes}
     for key, value in changes.items():
         setattr(token, key, value)
@@ -1408,15 +1411,13 @@ def registration_fields(_user: User = Depends(current_user), db: Session = Depen
 
 @app.put("/api/v1/registration-fields")
 def save_registration_fields(payload: SettingUpdate, user: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)):
-    from .registration import FIELDS, requirements
-    required = payload.value.get("required")
-    if not isinstance(required, list) or any(not isinstance(key, str) or key not in FIELDS for key in required) or "patient_name" not in required:
-        raise HTTPException(422, "Select supported fields; patient name must remain required")
+    from .registration import normalize_settings, requirements
+    value = normalize_settings(payload.value, requirements(db))
     setting = db.get(AppSetting, "registration_fields")
     if not setting:
-        setting = AppSetting(key="registration_fields", description="Mandatory patient registration fields", value={})
+        setting = AppSetting(key="registration_fields", description="Patient registration field configuration", value={})
         db.add(setting)
-    setting.value = {"required": sorted(set(required))}
+    setting.value = value
     db.add(AuditEvent(action="registration_fields.updated", actor=user.username, detail=setting.value))
     db.commit()
     return requirements(db)
@@ -1569,8 +1570,12 @@ def reception_report_excel(
         "Recalled At", "No Show At", "Scheduled At", "Recall Count", "Mobile Number", "Service Category",
         "Department", "Waiting Room", "Registration Type", "Patient Type", "Entitlement", "Service Status", "Sponsor Rank", "Family Relationship", "Summary Category",
     ]
+    from .registration import requirements
+    custom = requirements(db)['custom']
+    headers.extend(field['label'] for field in custom)
     sheet.append(headers)
     for cell in sheet[1]:
+        cell.data_type = "s"
         cell.fill = PatternFill("solid", fgColor="245B45")
         cell.font = Font(color="FFFFFF", bold=True)
         cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -1585,10 +1590,10 @@ def reception_report_excel(
             token.patient_phone, token.service_category, token.department, token.waiting_room, token.source,
             label("beneficiary_type", token.beneficiary_type), label("entitlement", token.entitlement), label("service_status", token.service_status),
             label("rank_relationship", token.sponsor_rank), label("family_relationship", token.family_relationship), token.summary_category or "Needs review",
-        ])
+        ] + [(token.custom_fields or {}).get(field['key'], '') for field in custom])
     sheet.freeze_panes = "F2"
     sheet.auto_filter.ref = sheet.dimensions
-    widths = [16, 13, 20, 25, 28, 8, 22, 28, 10, 8, 45, 22, 16, 12, 28, 16] + [20] * 9 + [12, 20, 20, 20, 16, 18] + [22] * 6
+    widths = [16, 13, 20, 25, 28, 8, 22, 28, 10, 8, 45, 22, 16, 12, 28, 16] + [20] * 9 + [12, 20, 20, 20, 16, 18] + [22] * 6 + [24] * len(custom)
     for column, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(column)].width = width
     for row in sheet.iter_rows(min_row=2):

@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 
-import { MonthlySummary, PatientClassification, AppSetting, Appointment, AuditEvent, AuthUser, DeviceEndpoint, DisplayState, Doctor, Holiday, LookupOption, Patient, PermissionDefinition, QueueReport, QueueToken, RadiographyDashboard, ReceptionReportRow, RoleDefinition, ScheduleSlot, SmsMessage, WaitingRoom } from './models';
+import { ClassificationOptions, ClassificationUpdate, RegistrationFields, CustomRegistrationField, MonthlySummary, PatientClassification, AppSetting, Appointment, AuditEvent, AuthUser, DeviceEndpoint, DisplayState, Doctor, Holiday, LookupOption, Patient, PermissionDefinition, QueueReport, QueueToken, RadiographyDashboard, ReceptionReportRow, RoleDefinition, ScheduleSlot, SmsMessage, WaitingRoom } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class QueueApiService {
@@ -51,11 +51,11 @@ export class QueueApiService {
   checkInAppointment(id: string) { return this.http.post<QueueToken>(`${this.baseUrl}/appointments/${id}/check-in`, {}); }
   registrationPreview() { return this.http.get<{ serial_number: string; date: string }>(`${this.baseUrl}/registration-preview`); }
 
-  createToken(payload: Record<string, string | number | null>) {
+  createToken(payload: Record<string, unknown>) {
     return this.http.post<QueueToken>(`${this.baseUrl}/tokens`, payload);
   }
 
-  updateWaitingPatient(id: string, payload: Record<string, string | number | null>) { return this.http.patch<QueueToken>(`${this.baseUrl}/tokens/${id}`, payload); }
+  updateWaitingPatient(id: string, payload: Record<string, unknown>) { return this.http.patch<QueueToken>(`${this.baseUrl}/tokens/${id}`, payload); }
   radiographerStatus() { return this.http.get<{id: string; name: string; room: string; occupied: boolean}[]>(`${this.baseUrl}/radiographers/status`); }
   createDoctor(payload: Record<string, unknown>) { return this.http.post(`${this.baseUrl}/admin/doctors`, payload); }
   removeDoctor(id: string) { return this.http.delete<void>(`${this.baseUrl}/admin/doctors/${id}`); }
@@ -105,13 +105,14 @@ export class QueueApiService {
   monthlySummary(params: Record<string, string>) { return this.http.get<MonthlySummary>(`${this.baseUrl}/reports/mri-summary`, { params }); }
   summaryPatients(params: Record<string, string>) { return this.http.get<QueueToken[]>(`${this.baseUrl}/reports/mri-summary/patients`, { params }); }
   summaryExport(format: 'xlsx' | 'pdf', params: Record<string, string>) { return this.http.get(`${this.baseUrl}/reports/mri-summary.${format}`, { params, responseType: 'blob' }); }
-  correctClassification(id: string, payload: PatientClassification) { return this.http.patch<QueueToken>(`${this.baseUrl}/tokens/${id}/classification`, payload); }
+  classificationOptions() { return this.http.get<ClassificationOptions>(`${this.baseUrl}/classification-options`); }
+  correctClassification(id: string, payload: ClassificationUpdate) { return this.http.patch<QueueToken>(`${this.baseUrl}/tokens/${id}/classification`, payload); }
   receptionReport(params: Record<string, string>) { return this.http.get<ReceptionReportRow[]>(`${this.baseUrl}/reports/reception`, { params }); }
   receptionReportExcel(params: Record<string, string>) { return this.http.get(`${this.baseUrl}/reports/reception.xlsx`, { params, responseType: 'blob', observe: 'response' }); }
   receptionReportPdf(params: Record<string, string>) { return this.http.get(`${this.baseUrl}/reports/reception.pdf`, { params, responseType: 'blob', observe: 'response' }); }
   audit() { return this.http.get<AuditEvent[]>(`${this.baseUrl}/audit`); }
-  registrationFields() { return this.http.get<{fields: Record<string, string>; required: string[]}>(`${this.baseUrl}/registration-fields`); }
-  saveRegistrationFields(required: string[]) { return this.http.put(`${this.baseUrl}/registration-fields`, {value: {required}}); }
+  registrationFields() { return this.http.get<RegistrationFields>(`${this.baseUrl}/registration-fields`); }
+  saveRegistrationFields(required: string[], enabled: string[], custom: CustomRegistrationField[]) { return this.http.put<RegistrationFields>(`${this.baseUrl}/registration-fields`, {value: {required, enabled, custom}}); }
   settings() { return this.http.get<AppSetting[]>(`${this.baseUrl}/settings`); }
   saveSetting(key: string, value: Record<string, any>) { return this.http.put<AppSetting>(`${this.baseUrl}/settings/${key}`, { value }); }
   testAnnouncement(value: Record<string, any>) { return this.http.post<{ status: string; voice_mode: string }>(`${this.baseUrl}/settings/announcement/test`, { value }); }

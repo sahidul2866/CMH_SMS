@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, StrictInt, StrictFloat
 
 
 class ReportClassification(BaseModel):
@@ -15,6 +15,7 @@ class ReportClassification(BaseModel):
 
 
 class TokenCreate(ReportClassification):
+    custom_fields: dict[str, StrictStr | StrictInt | StrictFloat | None] = Field(default_factory=dict)
     age: int | None = Field(default=None, ge=0, le=150)
     unit: str | None = Field(default=None, max_length=160)
     mri_area: str | None = Field(default=None, max_length=240)
@@ -48,6 +49,7 @@ class TokenRead(TokenCreate):
     token_number: str
     serial_number: str | None = None
     summary_category: str | None = None
+    summary_category_source: Literal["automatic", "manual"] = "automatic"
     token_date: date
     sequence: int
     status: str

@@ -18,10 +18,10 @@ from sqlalchemy.orm import Session
 
 from .auth import require_permission
 from .database import get_db
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .models import AppSetting, AuditEvent, LookupOption, QueueToken, User
-from .schemas import ReportClassification, TokenRead
+from .schemas import LookupRead, ReportClassification, TokenRead
 
 COLUMNS = [
     ('serving_officer', 'SERVING', "OFFR’S + AFNS"),
@@ -101,11 +101,42 @@ def configured_category(db, key, default):
     return default if category == '__inherit__' else category
 
 
+CATEGORY_LABELS = {
+    'serving_officer': ('Serving · Officers / AFNS', 'Serving military officers and AFNS.'),
+    'serving_cadet': ('Serving · Officer / Nursing cadets', 'Serving officer cadets and nursing cadets.'),
+    'serving_jco_or': ('Serving · JCOs / Other ranks / Recruits', 'Serving JCOs, other ranks and recruits.'),
+    'serving_nce': ('Serving · NCE', 'Serving NCE patients.'),
+    'serving_civil': ('Serving · Civil entitled', 'Civil-entitled patients classified as Self.'),
+    'retired_officer': ('Retired military · Officers / Officer family', 'Retired officers and their eligible family classifications.'),
+    'retired_or': ('Retired military · Other ranks', 'Retired other-rank patients.'),
+    'family_officer': ('Family · Officers', 'Family patients in the officer category.'),
+    'family_jco_or_nce': ('Family · JCOs / Other ranks / NCE', 'Family patients in the JCO, other-rank or NCE category.'),
+    'family_civil': ('Family · Civil entitled', 'Civil-entitled family patients.'),
+    're': ('RE', 'The RE column on the approved MRI summary form.'),
+    'cne': ('CNE', 'The CNE column on the approved MRI summary form.'),
+}
+
+
+def category_options():
+    return [{'key': key, 'label': CATEGORY_LABELS[key][0], 'description': CATEGORY_LABELS[key][1],
+             'report_label': f'{group} · {label}' if group else label} for key, group, label in COLUMNS]
+
+
+@router.get('/classification-options')
+def classification_options(db: Session = Depends(get_db), _user: User = Depends(require_permission('queue.serial.create'))):
+    from .registration import requirements
+    lookups = db.scalars(select(LookupOption).where(
+        LookupOption.category.in_([*CLASSIFICATION_LOOKUPS, 'rank_relationship'])
+    ).order_by(LookupOption.sort_order, LookupOption.label))
+    return {'columns': category_options(), 'registration': requirements(db),
+            'lookups': [LookupRead.model_validate(item).model_dump() for item in lookups]}
+
+
 def mapping_response(db):
     setting = db.get(AppSetting, MAPPING_KEY)
     saved = setting.value if setting else {}
     return {'rows': [{**row, 'category': saved.get(row['key'], row['default_category'])} for row in mapping_rows(db)],
-            'columns': [{'key': key, 'label': f'{group} · {label}' if group else label} for key, group, label in COLUMNS]}
+            'columns': category_options()}
 
 
 class MappingUpdate(BaseModel):
@@ -155,7 +186,7 @@ def classify(db: Session, payload) -> str | None:
     if person not in ('self', 'family'):
         return None
     if person == 'family' and not values['family_relationship']:
-        raise HTTPException(422, 'Select the family relationship')
+        return None
     if values['entitlement'] == 'civil':
         return configured_category(db, f'civil:{person}', 'family_civil' if person == 'family' else 'serving_civil')
     if values['entitlement'] != 'military':
@@ -163,7 +194,9 @@ def classify(db: Session, payload) -> str | None:
     rank = payload.sponsor_rank if person == 'family' else getattr(payload, 'rank', None)
     option = db.scalar(select(LookupOption).where(LookupOption.category == 'rank_relationship', LookupOption.value == rank, LookupOption.is_active.is_(True))) if rank else None
     if person == 'family' and not option:
-        raise HTTPException(422, 'Select an active sponsor rank for a military family patient')
+        if rank:
+            raise HTTPException(422, 'Select an active sponsor rank for a military family patient')
+        return None
     group = (option.metadata_json or {}).get('report_group') if option else None
     status = values['service_status']
     key = f'military:{person}:{status}:{group}'
@@ -250,7 +283,10 @@ def summary_patients(month: str | None = Query(default=None, pattern=r'^\d{4}-\d
 
 
 class ClassificationCorrection(ReportClassification):
+    model_config = ConfigDict(extra='forbid')
     rank: str | None = None
+    mode: Literal['inputs', 'direct'] = 'inputs'
+    summary_category: str | None = None
 
 
 @router.patch('/tokens/{token_id}/classification', response_model=TokenRead)
@@ -258,13 +294,39 @@ def correct_classification(token_id: str, payload: ClassificationCorrection, db:
     token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
     if not token:
         raise HTTPException(404, 'Patient not found')
-    category = classify(db, payload)
-    before = {key: getattr(token, key) for key in payload.model_fields_set}
-    before['summary_category'] = token.summary_category
-    for key, value in payload.model_dump().items():
-        setattr(token, key, value)
-    token.summary_category = category
-    db.add(AuditEvent(action='token.classification_updated', actor=user.username, token_id=token.id, detail={'before': before, 'after': {**payload.model_dump(), 'summary_category': category}}))
+    input_keys = {*ReportClassification.model_fields, 'rank'}
+    before = {key: getattr(token, key) for key in input_keys}
+    before.update(summary_category=token.summary_category, summary_category_source=token.summary_category_source)
+    if payload.mode == 'direct':
+        if 'summary_category' not in payload.model_fields_set or payload.summary_category not in {key for key, _, _ in COLUMNS} | {None}:
+            raise HTTPException(422, 'Choose an MRI summary category or Needs review')
+        if payload.model_fields_set & input_keys:
+            raise HTTPException(422, 'Direct classification accepts only the report category; use patient inputs to edit details')
+        token.summary_category = payload.summary_category
+        token.summary_category_source = 'manual'
+    else:
+        if 'summary_category' in payload.model_fields_set:
+            raise HTTPException(422, 'Use direct classification to select a report category')
+        from .registration import validate_registration
+        supplied = {key: value for key, value in payload.model_dump(exclude_unset=True).items() if key in input_keys}
+        # Validate only submitted input, preserving omitted/disabled historical values.
+        validated = validate_registration(db, ClassificationCorrection(**supplied), existing=token, check_required=False)
+        changes = {key: getattr(validated, key) for key in input_keys if key in validated.model_fields_set}
+        merged = ClassificationCorrection(**{key: changes.get(key, getattr(token, key)) for key in input_keys})
+        # Required dependent fields must be checked against the complete classification.
+        from .registration import applicable, blank, requirements, FIELDS
+        policy = requirements(db)
+        missing = [FIELDS[key] for key in policy['required'] if key in input_keys and key in policy['enabled']
+                   and applicable(db, merged, key) and blank(getattr(merged, key))]
+        if missing:
+            raise HTTPException(422, 'Required fields: ' + ', '.join(missing))
+        token.summary_category = classify(db, merged)
+        token.summary_category_source = 'automatic'
+        for key, value in changes.items():
+            setattr(token, key, value)
+    after = {key: getattr(token, key) for key in before}
+    db.add(AuditEvent(action='token.classification_updated', actor=user.username, token_id=token.id,
+                      detail={'mode': payload.mode, 'before': before, 'after': after}))
     db.commit()
     return token
 

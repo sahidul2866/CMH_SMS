@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import tempfile
 
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -66,29 +68,42 @@ def _ensure_sqlite_replica(primary_url: str, replica_url: str | None) -> str | N
 
     from . import models  # noqa: F401
 
-    primary_engine = create_engine(primary_url, pool_pre_ping=True)
-    sqlite_engine = create_engine(
-        replica_url,
-        connect_args={"check_same_thread": False},
-        pool_pre_ping=True,
-    )
-
-    Base.metadata.create_all(bind=sqlite_engine)
-    with primary_engine.connect() as source_conn:
-        for table in Base.metadata.sorted_tables:
-            rows = source_conn.execute(select(table)).mappings().all()
-            with sqlite_engine.begin() as target_conn:
-                target_conn.execute(table.delete())
-                if rows:
+    destination = Path(make_url(replica_url).database).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # This is a derived startup snapshot, not the primary database. Build a fresh
+    # schema beside it and replace only after every table has copied successfully.
+    with tempfile.NamedTemporaryFile(prefix=destination.name + '.', suffix='.tmp', dir=destination.parent, delete=False) as staging:
+        temporary = Path(staging.name)
+    primary_engine = None
+    sqlite_engine = None
+    try:
+        primary_engine = create_engine(primary_url, pool_pre_ping=True, hide_parameters=True,
+                                       isolation_level='REPEATABLE READ')
+        sqlite_engine = create_engine(f'sqlite:///{temporary.as_posix()}', hide_parameters=True)
+        Base.metadata.create_all(bind=sqlite_engine)
+        with primary_engine.connect() as source_conn, source_conn.begin(), sqlite_engine.begin() as target_conn:
+            for table in Base.metadata.sorted_tables:
+                for rows in source_conn.execute(select(table)).mappings().partitions(1000):
                     target_conn.execute(table.insert(), rows)
-
-    primary_engine.dispose()
-    sqlite_engine.dispose()
+        sqlite_engine.dispose()
+        primary_engine.dispose()
+        temporary.replace(destination)
+    finally:
+        if sqlite_engine is not None:
+            sqlite_engine.dispose()
+        if primary_engine is not None:
+            primary_engine.dispose()
+        temporary.unlink(missing_ok=True)
     return replica_url
 
 
+def refresh_sqlite_replica() -> None:
+    """Called at application startup, after the launcher applies migrations."""
+    _ensure_sqlite_replica(DATABASE_URL, REPLICA_DATABASE_URL)
+
+
 DATABASE_URL = _resolve_database_url()
-REPLICA_DATABASE_URL = _ensure_sqlite_replica(DATABASE_URL, _replica_database_url())
+REPLICA_DATABASE_URL = _replica_database_url() if DATABASE_URL.startswith("postgresql") else None
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(
     DATABASE_URL,
