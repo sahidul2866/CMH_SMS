@@ -49,6 +49,9 @@ export class QueueApiService {
     return this.http.patch<Appointment>(`${this.baseUrl}/appointments/${id}`, { action, reason, slot_id: slotId || null });
   }
   checkInAppointment(id: string) { return this.http.post<QueueToken>(`${this.baseUrl}/appointments/${id}/check-in`, {}); }
+  suggestBengaliName(patientName: string) {
+    return this.http.post<{patient_name_bn: string; needs_review: boolean}>(`${this.baseUrl}/bengali-name-suggestion`, {patient_name: patientName});
+  }
   registrationPreview() { return this.http.get<{ serial_number: string; date: string }>(`${this.baseUrl}/registration-preview`); }
 
   createToken(payload: Record<string, unknown>) {
@@ -59,6 +62,9 @@ export class QueueApiService {
   radiographerStatus() { return this.http.get<{id: string; name: string; room: string; occupied: boolean}[]>(`${this.baseUrl}/radiographers/status`); }
   createDoctor(payload: Record<string, unknown>) { return this.http.post(`${this.baseUrl}/admin/doctors`, payload); }
   removeDoctor(id: string) { return this.http.delete<void>(`${this.baseUrl}/admin/doctors/${id}`); }
+  assignmentDoctors() {
+    return this.http.get<Doctor[]>(`${this.baseUrl}/doctors`, {params: {assignment_destinations: true}});
+  }
   listDoctors() {
     return this.http.get<Doctor[]>(`${this.baseUrl}/doctors`);
   }

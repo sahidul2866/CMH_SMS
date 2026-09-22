@@ -8,13 +8,14 @@ export class RealtimeService {
   private readonly statusSubject = new BehaviorSubject<RealtimeStatus>('offline');
   readonly status$ = this.statusSubject.asObservable();
 
-  connect(waitingRoom: string): Observable<RealtimeEvent> {
+  connect(): Observable<RealtimeEvent> {
     return new Observable<RealtimeEvent>((subscriber) => {
       let socket: WebSocket | null = null;
       let reconnectTimer: number | null = null;
       let heartbeatTimer: number | null = null;
       let attempts = 0;
       let closedByClient = false;
+      let lastMessage = Date.now();
 
       const clearTimers = () => {
         if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -23,33 +24,44 @@ export class RealtimeService {
         heartbeatTimer = null;
       };
       const open = () => {
+        if (closedByClient) return;
         this.statusSubject.next(attempts ? 'recovering' : 'connecting');
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        socket = new WebSocket(
-          `${protocol}//${window.location.host}/api/v1/realtime/waiting-rooms/${encodeURIComponent(waitingRoom)}`,
-        );
-        socket.onopen = () => {
-          attempts = 0;
-          this.statusSubject.next('connected');
+        const connection = new WebSocket(`${protocol}//${window.location.host}/api/v1/realtime/updates`);
+        socket = connection;
+        connection.onopen = () => {
+          lastMessage = Date.now();
           heartbeatTimer = window.setInterval(() => {
-            if (socket?.readyState === WebSocket.OPEN) socket.send('ping');
+            if (Date.now() - lastMessage > 45000) { connection.close(); return; }
+            if (connection.readyState === WebSocket.OPEN) connection.send('ping');
           }, 15000);
         };
-        socket.onmessage = (message) => {
-          try { subscriber.next(JSON.parse(message.data) as RealtimeEvent); } catch { /* Ignore malformed events. */ }
+        connection.onmessage = (message) => {
+          if (closedByClient || socket !== connection) return;
+          try {
+            const event = JSON.parse(message.data) as RealtimeEvent;
+            lastMessage = Date.now();
+            if (event.type === 'connection.ready') {
+              attempts = 0;
+              this.statusSubject.next('connected');
+            }
+            subscriber.next(event);
+          } catch { /* Ignore malformed events. */ }
         };
-        socket.onerror = () => socket?.close();
-        socket.onclose = (event) => {
+        connection.onerror = () => connection.close();
+        connection.onclose = (event) => {
+          if (socket !== connection) return;
           clearTimers();
           if (closedByClient) return;
-          if (event.code === 4401) {
+          if (event.code === 4401 || event.code === 4403) {
             this.statusSubject.next('offline');
-            window.location.assign('/');
+            if (event.code === 4401) window.location.assign('/');
             return;
           }
           attempts += 1;
           this.statusSubject.next(attempts < 4 ? 'recovering' : 'offline');
-          reconnectTimer = window.setTimeout(open, Math.min(1000 * 2 ** (attempts - 1), 10000));
+          const delay = Math.min(1000 * 2 ** Math.min(attempts - 1, 5), 30000);
+          reconnectTimer = window.setTimeout(open, delay + Math.random() * delay * 0.2);
         };
       };
 

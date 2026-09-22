@@ -195,7 +195,7 @@ def seed() -> None:
         ensure(
             AppSetting(
                 key="announcement",
-                value={"language_order": ["bn", "en"], "repeat_count": 1, "rate": 0.88, "volume": 1.0, "voice_mode": "auto", "cache_max_files": 40},
+                value={"enabled": True, "language_order": ["bn", "en"], "repeat_count": 1, "rate": 0.88, "volume": 1.0, "voice_mode": "auto", "cache_max_files": 40},
                 description="Bilingual audio announcement policy",
             )
         )

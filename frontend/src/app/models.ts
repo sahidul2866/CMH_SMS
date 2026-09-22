@@ -69,6 +69,7 @@ export interface QueueToken extends PatientClassification {
   patient_source?: string | null;
   patient_title?: string | null;
   patient_name: string;
+  patient_name_bn?: string | null;
   patient_phone: string;
   service_category: string;
   rank?: string | null;
@@ -164,11 +165,12 @@ export type RealtimeStatus = 'connecting' | 'connected' | 'recovering' | 'offlin
 export interface RealtimeEvent {
   event_id: string;
   sequence: number;
-  type: 'connection.ready' | 'heartbeat' | 'queue.updated' | 'patient.called';
+  type: 'connection.ready' | 'heartbeat' | 'queue.updated' | 'patient.called' | 'data.changed';
   reason: string;
   waiting_room: string;
   occurred_at: string;
   display?: DisplayState;
+  topics?: string[];
 }
 
 export interface CustomRegistrationField {

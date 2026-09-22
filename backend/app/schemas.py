@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, StrictInt, StrictFloat
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, StrictInt, StrictFloat, field_validator
 
 
 class ReportClassification(BaseModel):
@@ -26,6 +26,14 @@ class TokenCreate(ReportClassification):
 
     patient_title: str | None = Field(default=None, max_length=30)
     patient_name: str = Field(min_length=2, max_length=160)
+    patient_name_bn: str | None = Field(default=None, max_length=480)
+
+    @field_validator("patient_name_bn")
+    @classmethod
+    def bengali_name(cls, value):
+        from .bangla_names import validate_bengali_name
+        return validate_bengali_name(value)
+
     patient_phone: str = Field(default="", max_length=30)
     service_category: str = Field(default="civilian", min_length=1, max_length=30)
     rank: str | None = Field(default=None, max_length=60)
@@ -367,3 +375,7 @@ class HolidayRead(HolidayCreate):
     model_config = ConfigDict(from_attributes=True)
     id: str
     is_active: bool
+
+
+class BengaliNameSuggestionRequest(BaseModel):
+    patient_name: str = Field(min_length=2, max_length=160)

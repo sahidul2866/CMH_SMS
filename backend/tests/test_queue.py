@@ -93,12 +93,21 @@ def test_admin_can_update_doctor_room_number():
 
 
 def test_waiting_patient_room_can_change_but_called_patient_room_is_locked():
+    from app.database import SessionLocal
     token = client.post("/api/v1/tokens", json=token_payload()).json()
-
+    # Even an administrator must own an existing assignment to change it.
+    assert client.patch(f"/api/v1/tokens/{token['id']}/room", json={"room_number": "207"}).status_code == 403
+    with SessionLocal() as db:
+        db.scalar(select(User).where(User.username == 'admin')).doctor_id = 'dr-khan'
+        db.commit()
     updated = client.patch(f"/api/v1/tokens/{token['id']}/room", json={"room_number": "207"})
-
     assert updated.status_code == 200
     assert updated.json()["room_number"] == "207"
+    assert updated.json()["doctor_id"] is None
+    assert client.post(f"/api/v1/doctors/dr-khan/tokens/{token['id']}/call").status_code == 403
+    with SessionLocal() as db:
+        db.get(Doctor, 'dr-khan').room_number = '207'
+        db.commit()
     called = client.post(f"/api/v1/doctors/dr-khan/tokens/{token['id']}/call").json()
     assert called["room_number"] == "207"
     locked = client.patch(f"/api/v1/tokens/{token['id']}/room", json={"room_number": "208"})
@@ -254,7 +263,7 @@ def test_bangla_announcement_is_one_continuous_voice_clip(monkeypatch, tmp_path)
 
     assert len(paths) == 2
     assert captured == [
-        ("bn_female", "রোগী Rahim Uddin, অনুগ্রহ করে কক্ষ নম্বর দুই শূন্য পাঁচ-এ যান।"),
+        ("bn_female", "রোগী রহিম উদ্দিন, অনুগ্রহ করে কক্ষ নম্বর দুই শূন্য পাঁচ-এ যান।"),
         ("en_male", "Rahim Uddin, please proceed to your radiographer, room 205."),
     ]
 
@@ -284,7 +293,7 @@ def test_bangla_generation_does_not_depend_on_prerecorded_prompts(monkeypatch, t
     engine._prepare(item)
 
     assert captured == [
-        ("bn_female", "রোগী Rahim Uddin, অনুগ্রহ করে কক্ষ নম্বর দুই শূন্য পাঁচ-এ যান।"),
+        ("bn_female", "রোগী রহিম উদ্দিন, অনুগ্রহ করে কক্ষ নম্বর দুই শূন্য পাঁচ-এ যান।"),
         ("en_male", "Rahim Uddin, please proceed to Dr. Ayesha Khan, room 205.")
     ]
 
@@ -445,7 +454,7 @@ def test_rbac_and_doctor_assignment_are_enforced():
     assert [row["doctor_id"] for row in scoped_dashboard.json()["radiographers"]] == ["dr-khan"]
     assert [doctor["id"] for doctor in client.get("/api/v1/doctors").json()] == ["dr-khan"]
     assert [room["code"] for room in client.get("/api/v1/waiting-rooms").json()] == ["WR-1"]
-    assert {token["doctor_id"] for token in client.get("/api/v1/tokens").json()} == {"dr-khan", "dr-other"}
+    assert {token["doctor_id"] for token in client.get("/api/v1/tokens").json()} == {"dr-khan", "dr-other", None}
     assert client.get("/api/v1/displays/WR-1").status_code == 403
     assert client.post(
         f"/api/v1/tokens/{other_token['id']}/transfer",
@@ -610,6 +619,8 @@ def test_reception_can_transfer_waiting_token_and_server_owns_doctor_metadata():
     payload = token_payload() | {"doctor_name": "Tampered", "department": "Wrong", "room_number": "999"}
     token = client.post("/api/v1/tokens", json=payload).json()
     assert token["doctor_name"] == "Dr. Ayesha Khan"
+    assert client.post(f"/api/v1/tokens/{token['id']}/transfer", json={"doctor_id": "dr-other", "reason": "Not the owner"}).status_code == 403
+    token = client.post("/api/v1/tokens", json={"patient_name": "Unassigned Patient"}).json()
     moved = client.post(
         f"/api/v1/tokens/{token['id']}/transfer",
         json={
@@ -875,6 +886,7 @@ def test_transfer_refreshes_both_source_and_destination_waiting_rooms(monkeypatc
                 token_prefix="OT",
             )
         )
+        db.scalar(select(User).where(User.username == "admin")).doctor_id = "dr-khan"
         db.commit()
     token = client.post("/api/v1/tokens", json=token_payload()).json()
     broadcasts = []
@@ -1146,7 +1158,7 @@ def test_idle_radiographer_can_take_waiting_patient_but_cannot_take_vip_or_runni
         db.add(Doctor(id='mri-idle', name='Idle Radiographer', department='MRI', designation='Radiographer',
                       room_number='209', waiting_room_id='waiting-room-1', token_prefix='MI'))
         db.commit()
-    normal = client.post('/api/v1/tokens', json=token_payload()).json()
+    normal = client.post('/api/v1/tokens', json={'patient_name': 'Unassigned Patient'}).json()
     vip = client.post('/api/v1/tokens', json=token_payload('VIP Patient') | {'priority': 'vip'}).json()
     available = client.get('/api/v1/doctors/mri-idle/available-patients')
     assert available.status_code == 200
@@ -1210,7 +1222,7 @@ def test_idle_claim_and_dashboard_details_respect_radiographer_scope():
         db.add(User(username='idle-radio', full_name='Idle Radiographer', password_hash=hash_password('Radiographer123!'),
                     role='radiographer', doctor_id='mri-idle', is_active=True))
         db.commit()
-    normal = client.post('/api/v1/tokens', json=token_payload()).json()
+    normal = client.post('/api/v1/tokens', json={'patient_name': 'Unassigned Patient'}).json()
     client.cookies.clear()
     client.post('/api/v1/auth/login', json={'username': 'idle-radio', 'password': 'Radiographer123!'}).raise_for_status()
     assert client.get('/api/v1/dashboard/patients').json()[0]['id'] == normal['id']
@@ -1237,7 +1249,7 @@ def test_reassignment_rejects_stale_source_queue():
     with SessionLocal() as stale, SessionLocal() as fresh:
         cached = stale.get(QueueToken, token['id'])
         assert cached.doctor_id == 'dr-khan'
-        QueueService(fresh).transfer(token['id'], 'idle-1', 'First transfer', 'admin')
+        QueueService(fresh).transfer(token['id'], 'idle-1', 'First transfer', 'admin', acting_doctor_id='dr-khan')
         with pytest.raises(HTTPException) as error:
             QueueService(stale).transfer(token['id'], 'idle-2', 'Stale claim', 'admin', expected_doctor_id='dr-khan')
         assert error.value.status_code == 409
@@ -1275,7 +1287,7 @@ def test_shared_registration_has_no_room_and_any_radiographer_can_call_once():
     assert client.post('/api/v1/doctors/dr-other/call-next').json()['id'] == another['id']
 
 
-def test_radiographer_can_call_waiting_patient_from_other_waiting_room():
+def test_radiographer_cannot_call_patient_assigned_to_another_room():
     from app.database import SessionLocal
     with SessionLocal() as db:
         db.add(Doctor(id='dr-other', name='Other Radiographer', department='MRI', designation='Radiographer',
@@ -1283,9 +1295,9 @@ def test_radiographer_can_call_waiting_patient_from_other_waiting_room():
         db.commit()
     token = client.post('/api/v1/tokens', json=token_payload()).json()
     called = client.post(f"/api/v1/doctors/dr-other/tokens/{token['id']}/call")
-    assert called.status_code == 200
-    assert called.json()['doctor_id'] == 'dr-other' and called.json()['room_number'] == '301'
-    assert called.json()['serial_number'] == token['serial_number']
+    assert called.status_code == 403
+    assert client.post('/api/v1/doctors/dr-other/call-next').status_code == 404
+    assert client.post(f"/api/v1/doctors/dr-other/claim/{token['id']}").status_code == 409
 
 
 def test_unassigned_vip_can_be_called_physically_by_any_radiographer():
@@ -1731,3 +1743,206 @@ def test_dashboard_priority_filter_applies_to_totals_charts_rooms_and_details():
             assert all((patient['priority'] == 'vip') == (priority == 'vip') for patient in patients)
     assert client.get('/api/v1/dashboard', params={'priority': 'invalid'}).status_code == 422
     assert client.get('/api/v1/dashboard/patients', params={'priority': 'invalid'}).status_code == 422
+
+
+def test_reception_assignment_and_owner_reassignment_enforced_across_endpoints():
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        for doctor_id, room in [('other', '301'), ('room-colleague', '205')]:
+            db.add(Doctor(id=doctor_id, name=doctor_id, department='MRI', designation='Radiographer',
+                          room_number=room, waiting_room_id='waiting-room-1', token_prefix=f'MR{room}'))
+        for username, role, doctor_id in [('desk', 'reception', None), ('owner', 'radiographer', 'dr-khan'),
+                                          ('other', 'radiographer', 'other'), ('colleague', 'radiographer', 'room-colleague')]:
+            db.add(User(username=username, full_name=username, role=role, doctor_id=doctor_id,
+                        password_hash=hash_password('Password123!'), is_active=True))
+        db.commit()
+
+    def login(username):
+        client.cookies.clear()
+        client.post('/api/v1/auth/login', json={'username': username, 'password': 'Password123!'}).raise_for_status()
+
+    def assign(token, destination):
+        return client.post(f"/api/v1/tokens/{token['id']}/transfer", json={'doctor_id': destination, 'reason': 'Room assignment'})
+
+    login('desk')
+    patient = client.post('/api/v1/tokens', json={'patient_name': 'Reception assignment'}).json()
+    assigned = assign(patient, 'dr-khan')
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()['room_number'] == '205'
+    assert assign(patient, 'other').status_code == 403
+    vip = client.post('/api/v1/tokens', json={'patient_name': 'Assigned VIP', 'priority': 'vip', 'doctor_id': 'dr-khan'}).json()
+    shared = client.post('/api/v1/tokens', json={'patient_name': 'Shared waiting patient'}).json()
+
+    login('other')
+    assert {item['id'] for item in client.get('/api/v1/doctors?assignment_destinations=true').json()} == {'dr-khan', 'other', 'room-colleague'}
+    assert [item['id'] for item in client.get('/api/v1/doctors').json()] == ['other']
+    assert assign(patient, 'other').status_code == 403
+    assert client.post(f"/api/v1/doctors/other/tokens/{patient['id']}/call").status_code == 403
+    assert client.post(f"/api/v1/doctors/other/tokens/{vip['id']}/action", json={'action': 'call_physically'}).status_code == 403
+    assert client.post(f"/api/v1/doctors/other/claim/{patient['id']}").status_code == 409
+    assert client.patch(f"/api/v1/tokens/{patient['id']}/room", json={'room_number': '301'}).status_code == 403
+    # Call next skips the earlier assigned patient and selects the shared patient.
+    assert client.post('/api/v1/doctors/other/call-next').json()['id'] == shared['id']
+
+    login('colleague')
+    # A different doctor in the assigned room can reassign.
+    reassigned = assign(patient, 'other')
+    assert reassigned.status_code == 200, reassigned.text
+    assert reassigned.json()['serial_number'] == patient['serial_number']
+    assert assign(patient, 'dr-khan').status_code == 403
+    assert client.post(f"/api/v1/doctors/room-colleague/tokens/{vip['id']}/action", json={'action': 'call_physically'}).status_code == 200
+
+    login('owner')
+    assert assign(patient, 'dr-khan').status_code == 403
+    login('other')
+    assert assign(patient, 'dr-khan').status_code == 200
+    # Any radiographer may assign an unassigned patient to a different doctor.
+    login('desk')
+    unassigned = client.post('/api/v1/tokens', json={'patient_name': 'Assign from radiographer list'}).json()
+    login('other')
+    assert assign(unassigned, 'dr-khan').status_code == 200
+
+
+def test_stale_unassigned_transfer_cannot_overwrite_new_assignment():
+    import pytest
+    from fastapi import HTTPException
+    from app.database import SessionLocal
+    from app.service import QueueService
+    token = client.post('/api/v1/tokens', json={'patient_name': 'Concurrent assignment'}).json()
+    with SessionLocal() as stale, SessionLocal() as fresh:
+        cached = stale.get(QueueToken, token['id'])
+        assert cached.doctor_id is None
+        QueueService(fresh).transfer(token['id'], 'dr-khan', 'First assignment', 'desk')
+        with pytest.raises(HTTPException) as error:
+            QueueService(stale).transfer(token['id'], 'dr-khan', 'Stale assignment', 'desk')
+        assert error.value.status_code == 403
+
+
+def test_bengali_name_suggestion_requires_registration_permission():
+    response = client.post('/api/v1/bengali-name-suggestion', json={'patient_name': 'Md. Rahim Uddin'})
+    assert response.status_code == 200
+    assert response.json() == {'patient_name_bn': 'মোহাম্মদ রহিম উদ্দিন', 'needs_review': True}
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        db.add(User(username='bn-auditor', full_name='Auditor', password_hash=hash_password('Password123!'), role='auditor', is_active=True))
+        db.commit()
+    client.cookies.clear()
+    assert client.post('/api/v1/bengali-name-suggestion', json={'patient_name': 'Rahim'}).status_code == 401
+    client.post('/api/v1/auth/login', json={'username': 'bn-auditor', 'password': 'Password123!'}).raise_for_status()
+    assert client.post('/api/v1/bengali-name-suggestion', json={'patient_name': 'Rahim'}).status_code == 403
+
+
+def test_bengali_name_saved_corrected_preserved_and_hidden_on_private_display():
+    payload = token_payload() | {'patient_name_bn': 'রহিম উদ্দিন', 'service_number': ''}
+    response = client.post('/api/v1/tokens', json=payload)
+    assert response.status_code == 201, response.text
+    token = response.json()
+    assert token['patient_name_bn'] == 'রহিম উদ্দিন'
+    assert token['patient_name'] == 'Rahim Uddin'
+    assert client.get('/api/v1/displays/WR-1').json()['next_tokens'][0]['patient_name_bn'] is None
+    updated = client.patch(f"/api/v1/tokens/{token['id']}", json=payload | {'patient_name_bn': 'রাহীম উদ্দীন'})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['patient_name_bn'] == 'রাহীম উদ্দীন'
+    # Older clients omitting this field preserve a correction during unrelated edits.
+    unchanged = client.patch(f"/api/v1/tokens/{token['id']}", json=token_payload() | {'unit': 'New unit'})
+    assert unchanged.json()['patient_name_bn'] == 'রাহীম উদ্দীন'
+    invalid = client.patch(f"/api/v1/tokens/{token['id']}", json=payload | {'patient_name_bn': 'Rahim Uddin'})
+    assert invalid.status_code == 422
+    called = client.post(f"/api/v1/doctors/dr-khan/tokens/{token['id']}/call")
+    assert called.status_code == 200
+    assert called.json()['patient_name_bn'] == 'রাহীম উদ্দীন'
+    assert client.get('/api/v1/displays/WR-1').json()['current']['patient_name_bn'] == 'রাহীম উদ্দীন'
+
+
+def test_name_change_from_old_client_clears_stale_bengali_pronunciation():
+    payload = token_payload() | {'patient_name_bn': 'রহিম উদ্দিন'}
+    token = client.post('/api/v1/tokens', json=payload).json()
+    renamed = client.patch(f"/api/v1/tokens/{token['id']}", json=token_payload('Nusrat Jahan'))
+    assert renamed.status_code == 200
+    assert renamed.json()['patient_name_bn'] is None
+
+
+def test_announcement_settings_save_modes_mute_queue_and_keep_patient_calls(monkeypatch):
+    from app.database import SessionLocal
+    engine = AnnouncementEngine()
+    engine.enabled = True
+    monkeypatch.setattr('app.main.announcement_engine', engine)
+    original = {'language_order': ['bn', 'en'], 'repeat_count': 1, 'rate': 0.88, 'volume': 1.0, 'voice_mode': 'offline_neural'}
+    with SessionLocal() as db:
+        db.add(AppSetting(key='announcement', value=original, description='Voice preferences'))
+        db.commit()
+    for languages, expected in [(['bn'], 'bn'), (['en'], 'en'), (['bn', 'en'], 'both')]:
+        response = client.put('/api/v1/settings/announcement', json={'value': {'enabled': True, 'language_order': languages}})
+        assert response.status_code == 200, response.text
+        saved = response.json()['value']
+        assert saved['language_order'] == languages
+        preview = client.post('/api/v1/settings/announcement/test', json={'value': saved})
+        assert preview.json()['status'] == 'queued'
+        assert engine._queue.get_nowait().language == expected
+        engine._queue.task_done()
+    patient = client.post('/api/v1/tokens', json=token_payload()).json()
+    engine.enqueue(type('Token', (), patient)(), original)
+    assert engine._queue.qsize() == 1
+    muted = client.put('/api/v1/settings/announcement', json={'value': {'enabled': False}})
+    assert muted.status_code == 200
+    assert engine._queue.empty()
+    assert next(item for item in client.get('/api/v1/settings').json() if item['key'] == 'announcement')['value']['enabled'] is False
+    called = client.post(f"/api/v1/doctors/dr-khan/tokens/{patient['id']}/call")
+    assert called.status_code == 200 and called.json()['status'] == 'called'
+    assert engine._queue.empty()
+    assert client.post('/api/v1/settings/announcement/test', json={'value': muted.json()['value']}).json()['status'] == 'disabled'
+    assert client.put('/api/v1/settings/announcement', json={'value': {'enabled': 'false'}}).status_code == 422
+    for invalid in [[], ['bn', 'bn'], ['fr'], [{}]]:
+        assert client.put('/api/v1/settings/announcement', json={'value': {'language_order': invalid}}).status_code == 422
+    enabled = client.put('/api/v1/settings/announcement', json={'value': {'enabled': True, 'language_order': ['en']}})
+    assert enabled.status_code == 200
+    assert client.post('/api/v1/settings/announcement/test', json={'value': enabled.json()['value']}).json()['status'] == 'queued'
+    assert engine._queue.get_nowait().language == 'en'
+
+
+def test_realtime_changes_cover_shared_registration_edits_and_ignore_reads():
+    with client.websocket_connect('/api/v1/realtime/updates') as socket:
+        assert socket.receive_json()['type'] == 'connection.ready'
+        patient = client.post('/api/v1/tokens', json={'patient_name': 'Shared realtime patient'}).json()
+        event = socket.receive_json()
+        assert event['type'] == 'data.changed' and event['topics'] == ['queue']
+        assert 'display' not in event and 'patient_name' not in event
+        client.patch(f"/api/v1/tokens/{patient['id']}", json={'patient_name': 'Corrected realtime patient'}).raise_for_status()
+        assert socket.receive_json()['topics'] == ['queue']
+        client.get('/api/v1/tokens').raise_for_status()
+        client.post('/api/v1/bengali-name-suggestion', json={'patient_name': 'Rahim Uddin'}).raise_for_status()
+        socket.send_text('ping')
+        assert socket.receive_json()['type'] == 'heartbeat', 'reads must not create a refresh loop'
+
+
+def test_realtime_requires_session_and_checks_revocation_on_heartbeat():
+    import pytest
+    from starlette.websockets import WebSocketDisconnect
+    from app.realtime import change_hub
+    with client.websocket_connect('/api/v1/realtime/updates') as socket:
+        assert socket.receive_json()['type'] == 'connection.ready'
+        client.post('/api/v1/auth/logout').raise_for_status()
+        socket.send_text('ping')
+        with pytest.raises(WebSocketDisconnect) as error:
+            socket.receive_json()
+        assert error.value.code == 4401
+    assert change_hub.connection_count('application') == 0
+    with pytest.raises(WebSocketDisconnect) as error:
+        with client.websocket_connect('/api/v1/realtime/updates'):
+            pass
+    assert error.value.code == 4401
+
+
+def test_radiographer_receives_change_hints_without_display_access():
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        db.add(User(username='live-radio', full_name='Live Radiographer', password_hash=hash_password('Password123!'), role='radiographer', doctor_id='dr-khan', is_active=True))
+        db.commit()
+    patient = client.post('/api/v1/tokens', json=token_payload()).json()
+    client.cookies.clear()
+    client.post('/api/v1/auth/login', json={'username': 'live-radio', 'password': 'Password123!'}).raise_for_status()
+    assert client.get('/api/v1/displays/WR-1').status_code == 403
+    with client.websocket_connect('/api/v1/realtime/updates') as socket:
+        assert socket.receive_json()['type'] == 'connection.ready'
+        client.post(f"/api/v1/doctors/dr-khan/tokens/{patient['id']}/call").raise_for_status()
+        assert socket.receive_json()['topics'] == ['queue']

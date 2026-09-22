@@ -79,7 +79,7 @@ from .models import (
 )
 from .monthly_report import router as monthly_report_router
 from .notification import SmsService, sms_outbox_worker
-from .realtime import waiting_room_hub
+from .realtime import change_hub, mutation_topics, waiting_room_hub
 from .schemas import (
     AppointmentCreate,
     AppointmentRead,
@@ -113,6 +113,7 @@ from .schemas import (
     SlotCreate,
     SlotRead,
     TokenCreate,
+    BengaliNameSuggestionRequest,
     TokenRead,
     TokenRoomUpdateRequest,
     TransferRequest,
@@ -132,6 +133,8 @@ async def lifespan(_: FastAPI):
     with SessionLocal() as db:
         db.execute(delete(UserSession).where(UserSession.expires_at <= datetime.utcnow()))
         db.commit()
+        announcement_setting = db.get(AppSetting, "announcement")
+        announcement_engine.set_announcements_enabled(not announcement_setting or announcement_setting.value.get("enabled", True))
     await announcement_engine.start()
     await sms_outbox_worker.start()
     yield
@@ -266,6 +269,13 @@ async def production_headers_and_request_log(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID", "")[:80] or secrets.token_hex(12)
     started = time.perf_counter()
     response = await call_next(request)
+    topics = mutation_topics(request.method, request.url.path, response.status_code)
+    if topics:
+        try:
+            await change_hub.publish(topics)
+        except Exception:
+            # A notification failure must not turn a committed write into an error.
+            logger.exception("Realtime change notification failed")
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -330,7 +340,7 @@ def validated_setting(key: str, value: dict) -> dict:
     allowed = {
         "display": {"privacy_mode", "next_token_count", "ticker_message"},
         "queue": {"ordering_policy", "recall_limit", "late_grace_minutes"},
-        "announcement": {"language_order", "repeat_count", "rate", "volume", "voice_mode", "cache_max_files"},
+        "announcement": {"enabled", "language_order", "repeat_count", "rate", "volume", "voice_mode", "cache_max_files"},
     }
     if key not in allowed:
         raise HTTPException(404, "Setting not found")
@@ -360,8 +370,10 @@ def validated_setting(key: str, value: dict) -> dict:
         integer("recall_limit", 0, 10)
         integer("late_grace_minutes", 0, 240)
     else:
+        if not isinstance(value.get("enabled", True), bool):
+            raise HTTPException(422, "enabled must be true or false")
         languages = value.get("language_order")
-        if not isinstance(languages, list) or not languages or any(item not in {"bn", "en"} for item in languages):
+        if not isinstance(languages, list) or not 1 <= len(languages) <= 2 or any(not isinstance(item, str) or item not in {"bn", "en"} for item in languages) or len(set(languages)) != len(languages):
             raise HTTPException(422, "language_order must contain bn and/or en")
         integer("repeat_count", 1, 3)
         number("rate", 0.5, 1.5)
@@ -653,13 +665,13 @@ def delete_user(user_id: str, administrator: User = Depends(require_permission("
 
 
 @app.get("/api/v1/doctors")
-def doctors(user: User = Depends(require_permission("directory.view")), db: Session = Depends(get_db)):
+def doctors(assignment_destinations: bool = False, user: User = Depends(require_permission("directory.view")), db: Session = Depends(get_db)):
     stmt = (
         select(Doctor, WaitingRoom)
         .join(WaitingRoom, WaitingRoom.id == Doctor.waiting_room_id)
         .where(Doctor.is_active.is_(True), WaitingRoom.is_active.is_(True))
     )
-    if user_access_profile(user, db) == "radiographer":
+    if user_access_profile(user, db) == "radiographer" and not assignment_destinations:
         if not user.doctor_id:
             return []
         stmt = stmt.where(Doctor.id == user.doctor_id)
@@ -848,8 +860,13 @@ def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depen
             if category == "rank_relationship" and ((option.metadata_json or {}).get("priority") == "vip" or value.lower() == "vip"):
                 payload.priority = "vip"
     from .monthly_report import classify
-    fields = {"custom_fields", "patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "beneficiary_type", "service_status", "entitlement", "sponsor_rank", "family_relationship"}
+    fields = {"custom_fields", "patient_name_bn", "patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "beneficiary_type", "service_status", "entitlement", "sponsor_rank", "family_relationship"}
     changes = {key: value for key, value in payload.model_dump().items() if key in fields}
+    if "patient_name_bn" not in payload.model_fields_set:
+        if payload.patient_name != token.patient_name:
+            changes["patient_name_bn"] = None
+        else:
+            changes.pop("patient_name_bn", None)
     if token.summary_category_source != "manual":
         changes["summary_category"] = classify(db, payload)
     before = {key: getattr(token, key) for key in changes}
@@ -1007,6 +1024,15 @@ async def check_in_appointment(
     return token
 
 
+@app.post("/api/v1/bengali-name-suggestion")
+def bengali_name_suggestion(
+    payload: BengaliNameSuggestionRequest,
+    user: User = Depends(require_permission("queue.serial.create")),
+):
+    from .bangla_names import suggest_bengali_name
+    return {"patient_name_bn": suggest_bengali_name(payload.patient_name), "needs_review": True}
+
+
 @app.get("/api/v1/registration-preview")
 def registration_preview(
     user: User = Depends(require_permission("queue.serial.create")), db: Session = Depends(get_db)
@@ -1162,9 +1188,7 @@ async def update_token_room(
     existing = db.get(QueueToken, token_id)
     if not existing:
         raise HTTPException(404, "Token not found")
-    if user_access_profile(user, db) == "radiographer" and existing.doctor_id != user.doctor_id:
-        raise HTTPException(403, "Radiographer accounts can only manage their assigned queue")
-    token = QueueService(db).update_room(token_id, payload.room_number, user.username)
+    token = QueueService(db).update_room(token_id, payload.room_number, user.username, acting_doctor_id=user.doctor_id)
     state = QueueService(db).display(token.waiting_room)
     await waiting_room_hub.broadcast(
         token.waiting_room, "queue.updated", "queue.room_changed", display=state.model_dump(mode="json")
@@ -1199,14 +1223,14 @@ def get_queue_control(doctor_id: str, user: User = Depends(require_permission("q
 async def transfer_token(
     token_id: str,
     payload: TransferRequest,
-    user: User = Depends(require_permission("queue.transfer")),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    if user_access_profile(user, db) == "radiographer":
-        raise HTTPException(403, "Radiographer accounts cannot transfer patients between queues")
+    if not (has_permission(user, db, "queue.transfer") or has_permission(user, db, "queue.action")):
+        raise HTTPException(403, "Patient assignment permission required")
     existing = db.get(QueueToken, token_id)
     previous_room = existing.waiting_room if existing else None
-    token = QueueService(db).transfer(token_id, payload.doctor_id, payload.reason, user.username)
+    token = QueueService(db).transfer(token_id, payload.doctor_id, payload.reason, user.username, acting_doctor_id=user.doctor_id)
     service = QueueService(db)
     if previous_room and previous_room != token.waiting_room:
         previous_state = service.display(previous_room)
@@ -1228,6 +1252,37 @@ def display(waiting_room: str, user: User = Depends(require_permission("display.
     if user_access_profile(user, db) == "radiographer":
         raise HTTPException(403, "Radiographer accounts cannot access waiting-room patient displays")
     return QueueService(db).display(waiting_room)
+
+
+@app.websocket("/api/v1/realtime/updates")
+async def application_realtime(websocket: WebSocket):
+    def access_code():
+        with SessionLocal() as db:
+            user = websocket_user(websocket, db)
+            if not user:
+                return 4401
+            if not any(has_permission(user, db, permission) for permission in ('queue.view', 'dashboard.view', 'display.view')):
+                return 4403
+        return None
+
+    code = access_code()
+    if code:
+        await websocket.close(code=code)
+        return
+    await change_hub.connect('application', websocket)
+    try:
+        while True:
+            message = await websocket.receive_text()
+            if message == 'ping':
+                code = access_code()
+                if code:
+                    await websocket.close(code=code)
+                    break
+                await websocket.send_json(change_hub.event('application', 'heartbeat', 'pong'))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await change_hub.disconnect('application', websocket)
 
 
 @app.websocket("/api/v1/realtime/waiting-rooms/{waiting_room}")
@@ -1429,7 +1484,7 @@ def settings(_: User = Depends(require_permission("settings.manage")), db: Sessi
 
 
 @app.put("/api/v1/settings/{key}")
-def update_setting(
+async def update_setting(
     key: str, payload: SettingUpdate, _: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)
 ):
     if key in {"registration_fields", "mri_summary_mapping"}:
@@ -1440,11 +1495,13 @@ def update_setting(
     setting.value = validated_setting(key, {**setting.value, **payload.value})
     db.commit()
     db.refresh(setting)
+    if key == "announcement":
+        announcement_engine.set_announcements_enabled(setting.value.get("enabled", True))
     return setting
 
 
 @app.post("/api/v1/settings/announcement/test", status_code=202)
-def test_announcement_voice(
+async def test_announcement_voice(
     payload: SettingUpdate, _: User = Depends(require_permission("settings.manage"))
 ):
     values = validated_setting("announcement", payload.value)
@@ -1458,8 +1515,8 @@ def test_announcement_voice(
             "room_number": "205",
         },
     )()
-    announcement_engine.enqueue(sample, values)
-    return {"status": "queued", "voice_mode": values.get("voice_mode", "auto")}
+    queued = announcement_engine.enqueue(sample, values)
+    return {"status": "queued" if queued else "disabled", "voice_mode": values.get("voice_mode", "auto")}
 
 
 @app.get("/api/v1/audit", response_model=list[AuditRead])

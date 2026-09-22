@@ -123,6 +123,7 @@ class QueueToken(Base):
     patient_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     patient_title: Mapped[str | None] = mapped_column(String(30), nullable=True)
     patient_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    patient_name_bn: Mapped[str | None] = mapped_column(String(480), nullable=True)
     patient_phone: Mapped[str] = mapped_column(String(30), nullable=False)
     service_category: Mapped[str] = mapped_column(String(30), nullable=False, default="civilian")
     rank: Mapped[str | None] = mapped_column(String(60), nullable=True)

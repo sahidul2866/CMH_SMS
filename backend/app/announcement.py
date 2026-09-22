@@ -10,6 +10,8 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
+from .bangla_names import suggest_bengali_name
+
 
 @dataclass(frozen=True)
 class Announcement:
@@ -23,6 +25,7 @@ class Announcement:
     rate: int = 150
     voice_mode: str = "auto"
     cache_max_files: int = 40
+    patient_name_bn: str | None = None
 
 
 class AnnouncementEngine:
@@ -41,6 +44,8 @@ class AnnouncementEngine:
         self.completed_count = 0
         self.last_error: str | None = None
         self.last_announcement: str | None = None
+        self.announcements_enabled = True
+        self._policy_generation = 0
 
     async def start(self) -> None:
         if self.enabled and self._worker is None:
@@ -56,10 +61,21 @@ class AnnouncementEngine:
                 pass
             self._worker = None
 
+    def set_announcements_enabled(self, enabled: bool) -> None:
+        self.announcements_enabled = enabled
+        if not enabled:
+            self._policy_generation += 1
+            while True:
+                try:
+                    self._queue.get_nowait()
+                    self._queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+
     def enqueue(self, token: Any, settings: dict | None = None) -> bool:
-        if not self.enabled:
-            return False
         values = settings or {}
+        if not self.enabled or not self.announcements_enabled or values.get("enabled", True) is False:
+            return False
         language = values.get("language")
         if not language:
             language_order = values.get("language_order", ["en"])
@@ -71,6 +87,7 @@ class AnnouncementEngine:
         item = Announcement(
             token_number=token.token_number,
             patient_name=token.patient_name,
+            patient_name_bn=getattr(token, "patient_name_bn", None),
             service_number=getattr(token, "service_number", None),
             doctor_name=getattr(token, "doctor_name", "your radiographer"),
             room_number=token.room_number,
@@ -88,6 +105,7 @@ class AnnouncementEngine:
         player = self._player()
         return {
             "enabled": self.enabled,
+            "announcements_enabled": self.announcements_enabled,
             "ready": synthesizer is not None and player is not None if self.enabled else False,
             "synthesizer": Path(synthesizer).name if synthesizer else None,
             "player": Path(player).name if player else None,
@@ -104,13 +122,19 @@ class AnnouncementEngine:
         while True:
             item = await self._queue.get()
             self.current_announcement = item.token_number
+            generation = self._policy_generation
             try:
+                if not self.announcements_enabled:
+                    continue
                 paths = await asyncio.to_thread(self._prepare, item)
                 for _ in range(item.repeat_count):
                     for path in paths:
+                        if not self.announcements_enabled or generation != self._policy_generation:
+                            break
                         await asyncio.to_thread(self._play, path)
-                self.last_announcement = item.token_number
-                self.completed_count += 1
+                if self.announcements_enabled and generation == self._policy_generation:
+                    self.last_announcement = item.token_number
+                    self.completed_count += 1
                 self.last_error = None
             except Exception as exc:
                 self.last_error = str(exc)
@@ -135,13 +159,15 @@ class AnnouncementEngine:
 
         if language in {"bn", "bangla", "both"}:
             service_number = getattr(item, "service_number", None)
+            bengali_name = (getattr(item, "patient_name_bn", None) or "").strip() or suggest_bengali_name(item.patient_name)
+            identity = f"রোগী {bengali_name}" if bengali_name else f"টোকেন নম্বর {self._bangla_identifier(item.token_number)}"
             # Keep the complete sentence in one generated clip. Splicing the
             # dynamic name/token between prerecorded prompts made the speaker,
             # volume and cadence change halfway through the announcement.
             paths.append(
                 synthesise(
                     (f"সার্ভিস নম্বর {self._bangla_identifier(service_number)}, " if service_number else "")
-                    + f"রোগী {item.patient_name}, অনুগ্রহ করে কক্ষ নম্বর "
+                    + f"{identity}, অনুগ্রহ করে কক্ষ নম্বর "
                     f"{self._bangla_identifier(item.room_number)}-এ যান।",
                     "bn_female",
                 )

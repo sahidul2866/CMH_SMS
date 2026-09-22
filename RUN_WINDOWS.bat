@@ -26,6 +26,10 @@ if not defined PYTHON_CMD call :find_python
 if not defined PYTHON_CMD call :install_python
 if not defined PYTHON_CMD goto :python_failed
 
+call :find_node
+if not defined NPM_CMD call :install_node
+if not defined NPM_CMD goto :node_failed
+
 call :find_espeak
 if not defined ESPEAK_EXE call :install_espeak
 
@@ -91,9 +95,24 @@ echo       Loading missing baseline data while preserving existing accounts...
 "%VENV_PYTHON%" "%POSTGRES_HELPER%" app.seed
 if errorlevel 1 goto :failed
 
+echo [5/9] Checking frontend dependencies...
+pushd "%FRONTEND_DIR%"
+if errorlevel 1 goto :failed
+if not exist "node_modules\" (
+    call "%NPM_CMD%" ci
+    if errorlevel 1 (
+        popd
+        goto :failed
+    )
+)
+echo [6/9] Building the current frontend for same-origin hosting...
+call "%NPM_CMD%" run build
+if errorlevel 1 (
+    popd
+    goto :failed
+)
+popd
 if not exist "%FRONTEND_DIR%\dist\cmh-smart-serial\browser\index.html" if not exist "%FRONTEND_DIR%\dist\cmh-smart-serial\index.html" goto :frontend_missing
-echo [5/9] Prebuilt frontend is included - no Node.js installation required.
-echo [6/9] Frontend is ready for server hosting.
 
 echo       Checking the application port...
 call :free_port %BACKEND_PORT%
@@ -187,7 +206,10 @@ exit /b 0
 if defined NPM_CMD exit /b 0
 if not exist "%~1" exit /b 0
 call "%~1" --version >nul 2>&1
-if not errorlevel 1 set "NPM_CMD=%~1"
+if errorlevel 1 exit /b 0
+set "NPM_CMD=%~1"
+rem npm scripts need node.exe on PATH, including immediately after WinGet setup.
+set "PATH=%~dp1;%PATH%"
 exit /b 0
 
 :install_node
@@ -269,8 +291,8 @@ echo Install it from https://nodejs.org/ and run this file again.
 goto :failed
 
 :frontend_missing
-echo ERROR: The prebuilt frontend is missing from this package.
-echo From the frontend folder run npm ci and npm run build, then run this launcher again.
+echo ERROR: The frontend build did not produce index.html.
+echo Check frontend\angular.json outputPath and the build output above.
 goto :failed
 
 :failed

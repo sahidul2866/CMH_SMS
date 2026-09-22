@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -129,6 +129,27 @@ class QueueService:
         )
         return [self._read(token) for token in self.db.scalars(stmt)]
 
+    @staticmethod
+    def assignment_filter(doctor: Doctor):
+        return or_(
+            and_(QueueToken.doctor_id.is_(None), or_(QueueToken.room_number == "", QueueToken.room_number.is_(None))),
+            QueueToken.doctor_id == doctor.id,
+            and_(QueueToken.room_number != "", QueueToken.room_number == doctor.room_number),
+        )
+
+    @staticmethod
+    def can_manage_assignment(token: QueueToken, doctor: Doctor | None) -> bool:
+        if not token.doctor_id and not token.room_number:
+            return True
+        return bool(doctor and doctor.is_active and (
+            token.doctor_id == doctor.id or
+            (token.room_number and token.room_number == doctor.room_number)
+        ))
+
+    def require_assignment_owner(self, token: QueueToken, doctor: Doctor | None) -> None:
+        if not self.can_manage_assignment(token, doctor):
+            raise HTTPException(403, "Only the assigned radiographer or a radiographer in the assigned room can call or reassign this patient")
+
     def call_next(self, doctor_id: str, actor: str | None = None) -> TokenRead:
         doctor = self.db.scalar(select(Doctor).where(Doctor.id == doctor_id).with_for_update())
         if not doctor or not doctor.is_active:
@@ -142,6 +163,7 @@ class QueueService:
                 QueueToken.token_date == date.today(),
                 QueueToken.status == "waiting",
                 QueueToken.priority != "vip",
+                self.assignment_filter(doctor),
             )
             .order_by(
                 case(self._priority_weights(), value=QueueToken.priority, else_=100),
@@ -199,6 +221,7 @@ class QueueService:
         return self._read(token)
 
     def _assign_for_call(self, token: QueueToken, doctor: Doctor) -> None:
+        self.require_assignment_owner(token, doctor)
         occupied = self.db.scalar(select(QueueToken.id).where(
             QueueToken.doctor_id == doctor.id, QueueToken.token_date == date.today(),
             QueueToken.status.in_(["called", "recalled", "in_progress"]), QueueToken.id != token.id
@@ -227,6 +250,8 @@ class QueueService:
             raise HTTPException(404, "Patient not found")
         if token.doctor_id != doctor_id and not (token.status == "waiting" and action in {"call_physically", "cancel"}):
             raise HTTPException(409, "This patient is already being handled by another radiographer")
+        if action in {"call_physically", "start", "recall"}:
+            self.require_assignment_owner(token, doctor)
         transitions = {
             "start": ({"waiting", "called", "recalled"}, "in_progress"),
             "call_physically": ({"waiting"}, "in_progress"),
@@ -318,13 +343,14 @@ class QueueService:
         self.db.refresh(control)
         return control
 
-    def transfer(self, token_id: str, doctor_id: str, reason: str, actor: str, expected_doctor_id: str | None = None) -> TokenRead:
+    def transfer(self, token_id: str, doctor_id: str, reason: str, actor: str, expected_doctor_id: str | None = None, acting_doctor_id: str | None = None) -> TokenRead:
         doctor = self.db.scalar(select(Doctor).where(Doctor.id == doctor_id).with_for_update())
         token = self.db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update().execution_options(populate_existing=True))
         if expected_doctor_id is not None and token and token.doctor_id != expected_doctor_id:
             raise HTTPException(409, "This patient has already moved to another queue")
         if not token or token.token_date != date.today():
             raise HTTPException(404, "Queue token not found")
+        self.require_assignment_owner(token, self.db.get(Doctor, acting_doctor_id) if acting_doctor_id else None)
         if token.status not in {"waiting", "skipped"}:
             raise HTTPException(409, "Only waiting or skipped tokens can be transferred")
         if not doctor or not doctor.is_active:
@@ -332,8 +358,6 @@ class QueueService:
         room = self.db.get(WaitingRoom, doctor.waiting_room_id)
         if not room or not room.is_active:
             raise HTTPException(409, "Destination has no active waiting room")
-        if token.priority == "vip":
-            raise HTTPException(409, "VIP rooms are assigned automatically")
         previous_status = token.status
         previous_doctor = token.doctor_id
         sequence = (
@@ -373,7 +397,7 @@ class QueueService:
             raise HTTPException(409, "Your queue must be empty before taking a patient from another room")
         return [self._read(token) for token in self.db.scalars(select(QueueToken).where(
             QueueToken.token_date == date.today(), or_(QueueToken.doctor_id != doctor_id, QueueToken.doctor_id.is_(None)),
-            QueueToken.status == "waiting", QueueToken.priority != "vip"
+            QueueToken.status == "waiting", QueueToken.priority != "vip", self.assignment_filter(doctor)
         ).order_by(QueueToken.created_at))]
 
     def claim_patient(self, token_id: str, doctor_id: str, actor: str) -> TokenRead:
@@ -381,7 +405,7 @@ class QueueService:
         candidate = next((token for token in available if token.id == token_id), None)
         if not candidate:
             raise HTTPException(409, "This patient is no longer available for reassignment")
-        return self.transfer(token_id, doctor_id, "Taken by an idle radiographer", actor, expected_doctor_id=candidate.doctor_id)
+        return self.transfer(token_id, doctor_id, "Taken by an idle radiographer", actor, expected_doctor_id=candidate.doctor_id, acting_doctor_id=doctor_id)
 
     def update_priority(self, token_id: str, priority: str, reason: str, actor: str) -> TokenRead:
         self._require_lookup("priority_category", priority)
@@ -402,10 +426,11 @@ class QueueService:
         self.db.commit()
         return self._read(token)
 
-    def update_room(self, token_id: str, room_number: str, actor: str) -> TokenRead:
-        token = self.db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
+    def update_room(self, token_id: str, room_number: str, actor: str, acting_doctor_id: str | None = None) -> TokenRead:
+        token = self.db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update().execution_options(populate_existing=True))
         if not token or token.token_date != date.today():
             raise HTTPException(404, "Queue token not found")
+        self.require_assignment_owner(token, self.db.get(Doctor, acting_doctor_id) if acting_doctor_id else None)
         if token.priority == "vip":
             raise HTTPException(409, "VIP rooms are assigned automatically")
         if token.status != "waiting":
@@ -416,6 +441,9 @@ class QueueService:
         self._require_lookup("room_number", room_number)
         previous_room = token.room_number
         token.room_number = room_number
+        token.doctor_id = None
+        token.doctor_name = ""
+        token.department = ""
         self._audit(
             token,
             "queue.room_changed",
@@ -519,10 +547,10 @@ class QueueService:
         if mode == "full":
             return token
         if mode == "token_only":
-            return token.model_copy(update={"patient_name": "Patient"})
+            return token.model_copy(update={"patient_name": "Patient", "patient_name_bn": None})
         parts = token.patient_name.split()
         masked = " ".join([parts[0], *[f"{part[0]}." for part in parts[1:] if part]]) if parts else "Patient"
-        return token.model_copy(update={"patient_name": masked})
+        return token.model_copy(update={"patient_name": masked, "patient_name_bn": None})
 
     def _get(self, token_id: str, doctor_id: str) -> QueueToken:
         token = self.db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())

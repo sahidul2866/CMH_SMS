@@ -1,5 +1,5 @@
-import { HttpInterceptorFn, HttpResponse } from '@angular/common/http';
-import { of } from 'rxjs';
+import { HttpErrorResponse, HttpInterceptorFn, HttpResponse } from '@angular/common/http';
+import { of, throwError } from 'rxjs';
 
 import { Doctor, QueueToken, WaitingRoom } from './models';
 
@@ -39,6 +39,7 @@ export const demoInterceptor: HttpInterceptorFn = (request, next) => {
   if (path === '/doctors' && request.method === 'GET') return json(doctors);
   if (path === '/waiting-rooms' && request.method === 'GET') return json(rooms);
   if (path === '/lookups' && request.method === 'GET') return json(lookupValues);
+  if (path === '/bengali-name-suggestion') return json({patient_name_bn: '', needs_review: true});
   if (path === '/registration-preview') return json({ serial_number: `${String(tokens.length + 1).padStart(5, '0')}/${String(new Date().getFullYear()).slice(-2)}`, date: new Intl.DateTimeFormat('en-CA').format(new Date()) });
   if (path === '/dashboard/patients') {
     const status = request.params.get('status') || 'all';
@@ -62,8 +63,20 @@ export const demoInterceptor: HttpInterceptorFn = (request, next) => {
     const body = request.body as Record<string, string>;
     if (['vip', 'brigadier_general'].includes(body['rank'])) body['priority'] = 'vip';
     const token: QueueToken = { ...(body as unknown as QueueToken), id: `demo-${Date.now()}`, doctor_id: null, doctor_name: '', department: '', room_number: '', waiting_room: '', token_number: `RD-${String(tokens.length + 1).padStart(3, '0')}`, serial_number: `${String(tokens.length + 1).padStart(5, '0')}/${String(new Date().getFullYear()).slice(-2)}`, status: 'waiting', waiting_minutes: 0, created_at: new Date().toISOString(), recall_count: 0 };
+    const doctor = doctors.find(item => item.id === body['doctor_id']);
+    if (doctor) Object.assign(token, {doctor_id: doctor.id, doctor_name: doctor.name, department: doctor.department, room_number: doctor.room, waiting_room: doctor.waitingRoom});
     tokens = [...tokens, token];
     return json(token, 201);
+  }
+  const transferMatch = path.match(/^\/tokens\/([^/]+)\/transfer$/);
+  if (transferMatch && request.method === 'POST') {
+    const token = tokens.find(item => item.id === transferMatch[1]);
+    const doctor = doctors.find(item => item.id === (request.body as {doctor_id: string}).doctor_id);
+    if (!token || !doctor || token.doctor_id || token.room_number || token.status !== 'waiting') {
+      return throwError(() => new HttpErrorResponse({status: 403, error: {detail: 'Only an unassigned waiting patient can be assigned by demo reception.'}}));
+    }
+    Object.assign(token, {doctor_id: doctor.id, doctor_name: doctor.name, department: doctor.department, room_number: doctor.room, waiting_room: doctor.waitingRoom});
+    return json(token);
   }
   const roomMatch = path.match(/^\/tokens\/([^/]+)\/room$/);
   if (roomMatch && request.method === 'PATCH') {
@@ -76,8 +89,9 @@ export const demoInterceptor: HttpInterceptorFn = (request, next) => {
   if ((callNextMatch || callMatch) && request.method === 'POST') {
     const doctorId = (callNextMatch || callMatch)![1];
     const tokenId = callMatch?.[2];
-    const token = tokens.find((item) => item.status === 'waiting' && item.priority !== 'vip' && (!tokenId || item.id === tokenId))!;
     const doctor = doctors.find(item => item.id === doctorId)!;
+    const token = tokens.find((item) => item.status === 'waiting' && item.priority !== 'vip' && (!tokenId || item.id === tokenId) && ((!item.doctor_id && !item.room_number) || item.doctor_id === doctor.id || item.room_number === doctor.room));
+    if (!token) return throwError(() => new HttpErrorResponse({status: 409, error: {detail: 'No eligible waiting patient found.'}}));
     token.doctor_id = doctor.id; token.doctor_name = doctor.name; token.room_number = doctor.room; token.waiting_room = doctor.waitingRoom;
     token.status = 'called';
     return json(token);

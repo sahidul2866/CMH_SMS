@@ -75,3 +75,52 @@ class WaitingRoomHub:
 
 
 waiting_room_hub = WaitingRoomHub()
+
+
+def mutation_topics(method: str, path: str, status_code: int) -> list[str]:
+    """Publish invalidation hints only after successful, relevant writes."""
+    if method not in {'POST', 'PUT', 'PATCH', 'DELETE'} or not 200 <= status_code < 300:
+        return []
+    prefix = '/api/v1/'
+    if not path.startswith(prefix):
+        return []
+    route = path[len(prefix):].strip('/')
+    if route == 'tokens' or route.startswith(('tokens/', 'doctors/')):
+        return ['queue']
+    if route.startswith('appointments/') and route.endswith('/check-in'):
+        return ['queue']
+    if route.startswith(('admin/doctors', 'admin/waiting-rooms')):
+        return ['directory', 'queue']
+    if route == 'lookups' or route.startswith('lookups/'):
+        return ['lookups', 'queue']
+    if route == 'registration-fields':
+        return ['registration']
+    if route in {'settings/display', 'settings/queue'}:
+        return ['queue']
+    if route in {'users', 'roles'} or route.startswith(('users/', 'roles/')):
+        return ['access']
+    return []
+
+
+class ChangeHub(WaitingRoomHub):
+    """Patient-free invalidation channel; clients refetch through scoped APIs."""
+
+    async def publish(self, topics: list[str]) -> None:
+        event = self.event('application', 'data.changed', 'updated', topics=topics)
+        async with self._lock:
+            clients = list(self._connections.get('application', set()))
+
+        async def send(client: WebSocket) -> None:
+            try:
+                await asyncio.wait_for(client.send_json(event), timeout=2)
+            except Exception:
+                await self.disconnect('application', client)
+                try:
+                    await asyncio.wait_for(client.close(code=1013), timeout=1)
+                except Exception:
+                    pass
+
+        await asyncio.gather(*(send(client) for client in clients))
+
+
+change_hub = ChangeHub()

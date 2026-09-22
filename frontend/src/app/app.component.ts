@@ -1,13 +1,14 @@
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Observable, Subscription, finalize, interval } from 'rxjs';
+import { Observable, Subscription, finalize, forkJoin, interval, of, timeout } from 'rxjs';
 
 import { ReportCategoryOption, ClassificationUpdate, RegistrationFields, CustomRegistrationField, MonthlySummary, PatientClassification, AppSetting, Appointment, AuditEvent, AuthUser, DashboardRoom, DeviceEndpoint, DisplayState, Doctor, Holiday, LookupOption, Patient, PermissionDefinition, QueueReport, QueueToken, RadiographyDashboard, RealtimeStatus, ReceptionReportRow, RoleDefinition, ScheduleSlot, SmsMessage, View, WaitingRoom } from './models';
 import { QueueApiService } from './queue-api.service';
 import { ModalComponent } from './modal.component';
 import { SearchableSelectComponent } from './searchable-select.component';
 import { RealtimeService } from './realtime.service';
+import { RefreshScheduler } from './refresh-scheduler';
 
 const EMPTY_DOCTOR: Doctor = { id: '', name: 'No radiographer configured', department: '—', room: '—', waitingRoom: '' };
 const TODAY_LOCAL = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -24,6 +25,15 @@ export class AppComponent implements OnDestroy {
   private readonly api = inject(QueueApiService);
   private readonly realtime = inject(RealtimeService);
   private refreshSubscription?: Subscription;
+  private readonly refreshScheduler = new RefreshScheduler((indicator, done) => this.performRefresh(indicator, done));
+  private refreshContext = '';
+  private directoryDirty = false;
+  private lookupsDirty = false;
+  private accessDirty = false;
+  private reconnectSeen = false;
+  private lastQueueFetch = Date.now();
+  private liveDate = new Date().toDateString();
+  private clockSubscription?: Subscription;
   private realtimeSubscription?: Subscription;
   private statusSubscription?: Subscription;
   readonly isDemo = document.documentElement.dataset['demo'] === 'true';
@@ -211,7 +221,7 @@ export class AppComponent implements OnDestroy {
   showRoleCreator = false;
   newRole = { name: '', display_name: '', access_profile: 'reception', description: '', permissions: [] as string[] };
   newUser = { username: '', full_name: '', password: '', role: 'reception', doctor_id: '' };
-  form = { beneficiary_type: '', service_status: '', entitlement: '', sponsor_rank: '', family_relationship: '', patient_title: '', patient_name: '', patient_phone: '', service_category: 'civilian', rank: '', service_number: '', priority: 'normal', age: null as number | null, unit: '', mri_area: '', contrast: null as number | null, film: null as number | null, report: '', patient_source: '' };
+  form = { beneficiary_type: '', service_status: '', entitlement: '', sponsor_rank: '', family_relationship: '', patient_title: '', patient_name: '', patient_name_bn: '', patient_phone: '', service_category: 'civilian', rank: '', service_number: '', priority: 'normal', age: null as number | null, unit: '', mri_area: '', contrast: null as number | null, film: null as number | null, report: '', patient_source: '' };
   registrationSerial = '';
   registrationServerDate = '';
   userSettingsSearch = '';
@@ -327,6 +337,7 @@ export class AppComponent implements OnDestroy {
   }
   customFieldLabel(key: string): string { return this.customFields.find(field => field.key === key)?.label || key; }
   editingPatientId = '';
+  registrationDoctorId = '';
   occupancy: {id: string; name: string; room: string; occupied: boolean}[] = [];
   occupancyError = '';
   doctorDraft = {id: '', name: '', department: 'Radiology', designation: 'Radiographer', room_number: '', waiting_room_id: '', token_prefix: 'MRI'};
@@ -357,6 +368,7 @@ export class AppComponent implements OnDestroy {
     this.api.removeDoctor(doctor.id).subscribe({next: () => {this.reloadDoctors(); this.notify('Radiographer removed; historical records retained');}, error: error => this.message = this.apiErrorMessage(error, 'Could not remove radiographer.')});
   }
   editWaitingPatient(token: QueueToken): void {
+    this.resetBengaliSuggestion();
     this.loadRegistrationFields();
     this.editingPatientId = token.id;
     this.customValues = {...token.custom_fields};
@@ -368,6 +380,9 @@ export class AppComponent implements OnDestroy {
     this.message = ''; this.showReceptionModal = true;
   }
   openRegistration(): void {
+    this.resetBengaliSuggestion();
+    this.form.patient_name_bn = '';
+    this.registrationDoctorId = '';
     this.customValues = {};
     this.loadRegistrationFields();
     if (this.editingPatientId) {
@@ -384,6 +399,51 @@ export class AppComponent implements OnDestroy {
       error: () => { this.message = 'Serial will be assigned when saved.'; },
     });
   }
+  bengaliSuggestionLoading = false;
+  bengaliSuggestionMessage = '';
+  private lastSuggestedBengaliName = '';
+  private bengaliSuggestionRequest = 0;
+
+  private resetBengaliSuggestion(): void {
+    this.bengaliSuggestionRequest++;
+    this.bengaliSuggestionLoading = false;
+    this.bengaliSuggestionMessage = '';
+    this.lastSuggestedBengaliName = '';
+  }
+
+  patientNameChanged(): void {
+    this.bengaliSuggestionRequest++;
+    this.bengaliSuggestionLoading = false;
+    if (this.form.patient_name_bn === this.lastSuggestedBengaliName) this.form.patient_name_bn = '';
+    this.lastSuggestedBengaliName = '';
+    this.bengaliSuggestionMessage = this.form.patient_name_bn ? 'The original name changed. Please review the Bengali spelling.' : '';
+  }
+
+  suggestBengaliName(replace = false): void {
+    const name = this.form.patient_name.trim();
+    if (name.length < 2 || name.length > 160 || this.busy || this.bengaliSuggestionLoading) return;
+    if (!replace && this.form.patient_name_bn.trim()) return;
+    const previous = this.form.patient_name_bn;
+    const request = ++this.bengaliSuggestionRequest;
+    this.bengaliSuggestionLoading = true;
+    this.bengaliSuggestionMessage = '';
+    this.api.suggestBengaliName(name).subscribe({
+      next: result => {
+        if (request !== this.bengaliSuggestionRequest) return;
+        this.bengaliSuggestionLoading = false;
+        if (!this.showReceptionModal || this.form.patient_name.trim() !== name || this.form.patient_name_bn !== previous) return;
+        this.form.patient_name_bn = result.patient_name_bn || '';
+        this.lastSuggestedBengaliName = this.form.patient_name_bn;
+        this.bengaliSuggestionMessage = result.patient_name_bn ? 'Suggested spelling — please check and correct it before saving.' : 'No suggestion available. Enter the name in Bengali.';
+      },
+      error: () => {
+        if (request !== this.bengaliSuggestionRequest) return;
+        this.bengaliSuggestionLoading = false;
+        this.bengaliSuggestionMessage = 'Suggestion unavailable. Enter the name in Bengali or try again.';
+      },
+    });
+  }
+
   get registrationDate(): string { return new Intl.DateTimeFormat('en-CA').format(new Date()); }
 
   printToken: QueueToken | null = null;
@@ -422,10 +482,12 @@ export class AppComponent implements OnDestroy {
   }
 
   private initialize(): void {
-    // Initialization may run after both a restored session and an explicit login.
-    // Keep exactly one polling timer so repeated initialization cannot multiply
-    // background requests.
     this.refreshSubscription?.unsubscribe();
+    this.clockSubscription?.unsubscribe();
+    this.statusSubscription?.unsubscribe();
+    this.realtimeSubscription?.unsubscribe();
+    this.refreshScheduler.cancel();
+    this.reconnectSeen = false;
     if (this.currentUser?.must_change_password) return;
     const requestedView = new URLSearchParams(window.location.search).get('view');
     const defaultView: View = this.hasPermission('pages.dashboard') ? 'dashboard'
@@ -450,7 +512,7 @@ export class AppComponent implements OnDestroy {
           : undefined;
         this.selectedDoctorId = assigned?.id || (doctors.some((doctor) => doctor.id === this.selectedDoctorId) ? this.selectedDoctorId : doctors[0].id);
         if (!doctors.some((doctor) => doctor.id === this.appointmentDoctorId)) this.appointmentDoctorId = doctors[0].id;
-        this.doctorChanged();
+        if (this.view === 'doctor') this.refresh(false);
       },
     });
     this.api.listWaitingRooms().subscribe({ next: (rooms) => {
@@ -458,16 +520,29 @@ export class AppComponent implements OnDestroy {
       if (!rooms.some((room) => room.code === this.selectedWaitingRoom)) this.selectedWaitingRoom = rooms[0]?.code || '';
       if (!this.newDevice.waiting_room) this.newDevice.waiting_room = rooms[0]?.code || '';
       if (this.view === 'display' && this.selectedWaitingRoom) {
-        this.refresh();
-        this.connectRealtime();
+        this.refresh(false);
       }
     } });
-    // Poll silently. Showing the global loading bar for every poll made the
-    // page flash even when no queue data had changed.
-    this.refreshSubscription = interval(2000).subscribe(() => this.refresh(false));
+    // A connected client refreshes only on changes. This timer is recovery only.
+    this.refreshSubscription = interval(30000).subscribe(() => {
+      if (!document.hidden && navigator.onLine && this.liveView() && !this.isDemo &&
+          (this.realtimeStatus !== 'connected' || this.dataStatus === 'offline')) {
+        this.directoryDirty = this.lookupsDirty = true;
+        this.refresh(false);
+      }
+    });
+    // Advance visible waiting times without asking the server every minute.
+    this.clockSubscription = interval(60000).subscribe(() => {
+      if (document.hidden || !this.liveView()) return;
+      const day = new Date().toDateString();
+      if (day !== this.liveDate) { this.liveDate = day; this.refresh(false); }
+      const minutes = Math.floor((Date.now() - this.lastQueueFetch) / 60000);
+      if (minutes < 1) return;
+      this.tokens = this.tokens.map(token => token.status === 'waiting' ? {...token, waiting_minutes: token.waiting_minutes + minutes} : token);
+      this.lastQueueFetch += minutes * 60000;
+    });
     this.statusSubscription = this.realtime.status$.subscribe((status) => this.realtimeStatus = status);
-    if (this.view === 'display') this.connectRealtime();
-    if (this.view === 'dashboard') this.loadDashboard();
+    this.connectRealtime();
     if (this.view === 'reports') { this.api.report().subscribe((report) => this.report = report); this.api.audit().subscribe((events) => this.auditEvents = events); }
     if (this.view === 'reception-report') this.loadReceptionReport();
     if (this.view === 'settings') this.loadSettings();
@@ -485,6 +560,9 @@ export class AppComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.refreshScheduler.cancel();
+    this.clockSubscription?.unsubscribe();
+    clearTimeout(this.toastTimer);
     this.classificationRequest?.unsubscribe();
     this.refreshSubscription?.unsubscribe();
     this.realtimeSubscription?.unsubscribe();
@@ -550,13 +628,7 @@ export class AppComponent implements OnDestroy {
     return this.roles.find((role) => role.name === this.selectedRoleName);
   }
 
-  loadDashboard(): void {
-    const priority = this.dashboardPriority;
-    this.api.dashboard(priority).subscribe({
-      next: dashboard => { if (priority === this.dashboardPriority) { this.dashboard = dashboard; this.dashboardLoading = false; this.markSynced(); } },
-      error: error => { if (priority === this.dashboardPriority) { this.dashboardLoading = false; this.message = this.apiErrorMessage(error, 'Could not load dashboard.'); this.markOffline(); } },
-    });
-  }
+  loadDashboard(): void { this.refresh(); }
   filterDashboard(): void {
     this.dashboardLoading = true;
     this.loadDashboard();
@@ -729,7 +801,7 @@ export class AppComponent implements OnDestroy {
 
   get waiting(): QueueToken[] { return this.activeQueue.filter(token => token.status === 'waiting'); }
 
-  get callableWaiting(): QueueToken[] { return this.waiting.filter((token) => token.priority !== 'vip'); }
+  get callableWaiting(): QueueToken[] { return this.waiting.filter((token) => token.priority !== 'vip' && this.canManageAssignment(token)); }
 
   get current(): QueueToken | undefined {
     return this.tokens.find((token) => token.doctor_id === this.selectedDoctorId && ['called', 'recalled', 'in_progress'].includes(token.status));
@@ -800,6 +872,8 @@ export class AppComponent implements OnDestroy {
     if (!this.registrationFieldsLoaded) return ['Patient field settings are loading or unavailable'];
     for (const field of this.customFields) { if (field.enabled && field.required && (this.customValues[field.key] === null || this.customValues[field.key] === undefined || String(this.customValues[field.key]).trim() === '')) missing.push(field.label); }
     if (this.form.patient_name.trim().length < 2) missing.push('patient name');
+    const bengaliName = this.form.patient_name_bn.trim();
+    if (bengaliName && (!/^[\u0980-\u09ff\s.,।'’()\-\u200c\u200d]+$/u.test(bengaliName) || !/[\u0985-\u09b9\u09ce\u09dc-\u09e1\u09f0\u09f1]/u.test(bengaliName))) missing.push('Bengali letters for the announcement name');
     for (const key of this.requiredFields.filter(key => this.fieldEnabled(key) && this.fieldApplicable(key))) { const value = (this.form as any)[key]; if (value === null || value === undefined || String(value).trim() === '') missing.push(this.registrationFields[key] || key); }
     if ((['age', 'contrast', 'film'] as const).filter(key => this.fieldEnabled(key)).map(key => this.form[key]).some(value => value !== null && (!Number.isInteger(value) || value < 0)) || (this.fieldEnabled('age') && this.form.age !== null && this.form.age > 150)) missing.push('valid age, contrast and film numbers');
     return missing;
@@ -818,8 +892,7 @@ export class AppComponent implements OnDestroy {
     window.history.pushState({}, '', url);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     this.refresh();
-    if (view === 'display') this.connectRealtime();
-    else this.realtimeSubscription?.unsubscribe();
+    this.connectRealtime();
     if (view === 'reports') { this.api.report().subscribe((report) => this.report = report); this.api.audit().subscribe((events) => this.auditEvents = events); }
     if (view === 'reception-report') this.loadReceptionReport();
     if (view === 'settings') {
@@ -891,7 +964,7 @@ export class AppComponent implements OnDestroy {
       this.message = 'Patient name must contain at least 2 characters.';
       return;
     }
-    if (this.missingTokenFields.length) return;
+    if (this.missingTokenFields.length || this.bengaliSuggestionLoading) return;
     this.busy = true;
     const payload = this.enabledPayload({
       ...this.form,
@@ -901,7 +974,7 @@ export class AppComponent implements OnDestroy {
       patient_phone: this.form.patient_phone.trim(),
       rank: this.form.rank || '',
       service_number: this.form.service_number.trim(),
-      doctor_id: null,
+      doctor_id: this.registrationDoctorId || null,
       doctor_name: '',
       department: '',
       room_number: '',
@@ -916,6 +989,8 @@ export class AppComponent implements OnDestroy {
         this.form.priority = 'normal';
         this.customValues = {};
         this.form.patient_name = '';
+        this.form.patient_name_bn = '';
+        this.resetBengaliSuggestion();
         this.form.patient_phone = '';
         this.form.rank = '';
         this.form.service_number = '';
@@ -1067,7 +1142,23 @@ export class AppComponent implements OnDestroy {
   openAction(token: QueueToken, action: string): void {
     this.actionDialog = { token, action }; this.actionReason = ''; this.actionDestination = ''; this.actionPriority = token.priority;
   }
-  transferPatient(token: QueueToken): void { this.openAction(token, 'transfer'); }
+  assignmentDoctors: Doctor[] = [];
+  canManageAssignment(token: QueueToken): boolean {
+    if (!token.doctor_id && !token.room_number) return true;
+    const doctor = this.view === 'doctor' ? this.selectedDoctor : this.doctors.find(item => item.id === this.currentUser?.doctor_id);
+    return !!doctor && (token.doctor_id === doctor.id || (!!token.room_number && token.room_number === doctor.room));
+  }
+  canAssign(token: QueueToken): boolean {
+    return (this.hasPermission('queue.transfer') || this.hasPermission('queue.action'))
+      && ['waiting', 'skipped'].includes(token.status)
+      && ((!token.doctor_id && !token.room_number) || (!!this.currentUser?.doctor_id && this.canManageAssignment(token)));
+  }
+  transferPatient(token: QueueToken): void {
+    this.assignmentDoctors = [];
+    this.openAction(token, 'transfer');
+    this.api.assignmentDoctors().subscribe({next: doctors => this.assignmentDoctors = doctors,
+      error: error => this.message = this.apiErrorMessage(error, 'Could not load assignment destinations. Close and retry.')});
+  }
   togglePriority(token: QueueToken): void { this.openAction(token, 'priority'); }
   submitAction(): void {
     const context = this.actionDialog;
@@ -1106,13 +1197,24 @@ export class AppComponent implements OnDestroy {
     this.trackSettingsSave(this.api.saveSetting(setting.key, setting.value)).subscribe({ next: () => { this.settings = this.settings.map(item => item.key === setting.key ? structuredClone(setting) : item); this.editor = ''; this.notify(`${setting.key} settings saved.`); }, error: () => this.message = 'Unable to save settings.' });
   }
 
+  announcementMode(setting: AppSetting): string {
+    if (setting.value['enabled'] === false) return 'off';
+    const languages: string[] = setting.value['language_order'] || ['en'];
+    return languages.includes('bn') && languages.includes('en') ? 'both' : languages.includes('bn') ? 'bn' : 'en';
+  }
+
+  setAnnouncementMode(setting: AppSetting, mode: string): void {
+    setting.value['enabled'] = mode !== 'off';
+    if (mode !== 'off') setting.value['language_order'] = mode === 'both' ? ['bn', 'en'] : [mode];
+  }
+
   testAnnouncement(setting: AppSetting): void {
     this.audioTestBusy = true;
     this.api.testAnnouncement(setting.value).subscribe({
-      next: () => {
+      next: result => {
         this.audioTestBusy = false;
         const label = setting.value['voice_mode'] === 'offline_neural' ? 'Offline neural' : setting.value['voice_mode'] === 'offline' ? 'Basic offline' : 'Automatic';
-        this.message = `${label} voice test queued on the server audio output.`;
+        this.message = result.status === 'disabled' ? 'Announcements are off. Save an enabled announcement mode and check that server audio is enabled before testing.' : `${label} voice test queued on the server audio output.`;
       },
       error: (error) => {
         this.audioTestBusy = false;
@@ -1204,7 +1306,7 @@ export class AppComponent implements OnDestroy {
       this.api.settings().subscribe((settings) => {
         this.settings = settings.filter(setting => !['registration_fields', 'mri_summary_mapping'].includes(setting.key)).map((setting) => setting.key === 'announcement' ? {
           ...setting,
-          value: { voice_mode: 'auto', cache_max_files: 40, ...setting.value },
+          value: { enabled: true, voice_mode: 'auto', cache_max_files: 40, ...setting.value },
         } : setting);
       });
     }
@@ -1362,46 +1464,126 @@ export class AppComponent implements OnDestroy {
 
   canAction(token: QueueToken, action: string): boolean {
     if (!this.hasPermission('queue.action')) return false;
+    if (['call_physically', 'start', 'recall'].includes(action) && !this.canManageAssignment(token)) return false;
     const states: Record<string, string[]> = { start: ['called', 'recalled'], complete: ['in_progress'], skip: ['called', 'recalled'], recall: ['skipped', 'called', 'recalled'], no_show: ['called', 'recalled', 'skipped'], cancel: ['waiting', 'called', 'recalled', 'skipped', 'in_progress'] };
     if (action === 'call_physically') return token.priority === 'vip' && token.status === 'waiting';
     return states[action]?.includes(token.status) || false;
   }
 
+  private liveView(): boolean {
+    return ['reception', 'doctor', 'dashboard', 'display'].includes(this.view);
+  }
+
+  private currentRefreshContext(): string {
+    if (this.view === 'doctor') return `${this.view}|${this.selectedDoctorId}|${this.doctorOpened}`;
+    if (this.view === 'dashboard') return `${this.view}|${this.dashboardDetail}|${this.dashboardPriority}`;
+    if (this.view === 'display') return `${this.view}|${this.selectedWaitingRoom}`;
+    return this.view;
+  }
+
   refresh(showIndicator = true): void {
-    if (this.view === 'settings' && this.settingsTab === 'summary-mapping' && this.hasPermission('settings.manage')) this.syncSummaryMapping();
-    if (showIndicator) this.isRefreshing = true;
-    if (this.view === 'dashboard') { this.loadDashboard(); if (this.dashboardDetail) this.loadDashboardPatients(false); return; }
-    if (this.view === 'display') {
-      if (!this.selectedWaitingRoom) { this.isRefreshing = false; return; }
-      this.api.display(this.selectedWaitingRoom).subscribe({
-        next: (state) => { this.displayState = state; this.speakDisplay(state); this.markSynced(); },
-        error: () => this.markOffline(),
+    const context = this.currentRefreshContext();
+    if (context !== this.refreshContext) {
+      this.refreshScheduler.cancel();
+      this.refreshContext = context;
+    }
+    if (!this.liveView() || document.hidden) { this.isRefreshing = false; return; }
+    this.refreshScheduler.request(showIndicator);
+  }
+
+  private performRefresh(showIndicator: boolean, done: () => void): () => void {
+    if (!this.liveView() || document.hidden) { done(); return () => {}; }
+    const context = this.currentRefreshContext();
+    const view = this.view;
+    if (this.accessDirty) {
+      this.accessDirty = false;
+      let sessionSettled = false;
+      const sessionRequest = this.api.session().pipe(timeout(15000), finalize(() => {
+        if (!sessionSettled) this.accessDirty = true;
+        done();
+      })).subscribe({
+        next: user => {
+          sessionSettled = true;
+          if (JSON.stringify(user) !== JSON.stringify(this.currentUser)) {
+            this.currentUser = user;
+            if (user) this.initialize();
+            else {
+              this.realtimeSubscription?.unsubscribe();
+              this.refreshSubscription?.unsubscribe();
+              this.clockSubscription?.unsubscribe();
+              this.refreshScheduler.cancel();
+            }
+          } else this.refresh(false);
+        },
+        error: () => { this.accessDirty = true; this.markOffline(); },
       });
-      return;
+      return () => sessionRequest.unsubscribe();
     }
-    if (this.view !== 'reception' && this.view !== 'doctor') { this.isRefreshing = false; return; }
-    if (this.view === 'doctor' && this.hasPermission('queue.view')) this.api.radiographerStatus().subscribe({next: rows => { this.occupancy = rows; this.occupancyError = ''; }, error: () => { this.occupancy = []; this.occupancyError = 'Could not load radiographer status.'; }});
-    if (this.view === 'doctor' && !this.doctorOpened) { this.isRefreshing = false; return; }
-    if (!this.selectedDoctorId && this.view !== 'reception') {
-      this.tokens = [];
-      this.isRefreshing = false;
-      return;
-    }
-    const requestView = this.view;
-    const requestDoctor = this.view === 'reception' ? '' : this.selectedDoctorId;
-    this.api.listTokens(requestDoctor, requestView === 'doctor').subscribe({
-      next: (tokens) => {
-        if (this.view !== requestView || (requestView === 'doctor' && this.selectedDoctorId !== requestDoctor)) return;
-        this.tokens = tokens;
-        for (const token of tokens) {
-          if (this.tokenRoomDrafts[token.id] === undefined || token.status !== 'waiting') {
-            this.tokenRoomDrafts[token.id] = token.room_number;
+    const directory = this.directoryDirty && this.hasPermission('directory.view');
+    const lookups = this.lookupsDirty && this.hasPermission('master_data.view');
+    this.directoryDirty = this.lookupsDirty = false;
+    if (showIndicator) this.isRefreshing = true;
+    let settled = false;
+    const request = forkJoin({
+      dashboard: view === 'dashboard' ? this.api.dashboard(this.dashboardPriority) : of(null),
+      patients: view === 'dashboard' && !!this.dashboardDetail ? this.api.dashboardPatients(this.dashboardDetail, this.dashboardPriority) : of(null),
+      display: view === 'display' && !!this.selectedWaitingRoom ? this.api.display(this.selectedWaitingRoom) : of(null),
+      occupancy: view === 'doctor' && this.hasPermission('queue.view') ? this.api.radiographerStatus() : of(null),
+      tokens: view === 'reception' ? this.api.listTokens('') : view === 'doctor' && this.doctorOpened && !!this.selectedDoctorId ? this.api.listTokens(this.selectedDoctorId, true) : of(null),
+      doctors: directory ? this.api.listDoctors() : of(null),
+      rooms: directory ? this.api.listWaitingRooms() : of(null),
+      lookups: lookups ? this.api.lookups(this.hasPermission('master_data.manage')) : of(null),
+    }).pipe(timeout(15000), finalize(() => {
+      if (!settled) {
+        this.directoryDirty ||= directory;
+        this.lookupsDirty ||= lookups;
+      }
+      done();
+    })).subscribe({
+      next: result => {
+        if (context !== this.currentRefreshContext()) return;
+        settled = true;
+        if (result.dashboard && JSON.stringify(result.dashboard) !== JSON.stringify(this.dashboard)) this.dashboard = result.dashboard;
+        if (result.patients) { this.dashboardPatients = result.patients; this.detailError = ''; }
+        if (result.display) { this.displayState = result.display; this.speakDisplay(result.display); }
+        if (result.occupancy) { this.occupancy = result.occupancy; this.occupancyError = ''; }
+        if (result.tokens) {
+          if (JSON.stringify(this.tokens) !== JSON.stringify(result.tokens)) this.tokens = result.tokens;
+          this.lastQueueFetch = Date.now();
+          for (const token of result.tokens) {
+            if (this.tokenRoomDrafts[token.id] === undefined || token.status !== 'waiting') this.tokenRoomDrafts[token.id] = token.room_number;
           }
         }
+        if (result.doctors) {
+          this.doctors = result.doctors;
+          this.setDoctorRoomDrafts();
+          if (!this.doctors.some(doctor => doctor.id === this.selectedDoctorId)) {
+            this.selectedDoctorId = this.doctors[0]?.id || '';
+            this.refresh(false);
+          }
+        }
+        if (result.rooms) {
+          this.waitingRooms = result.rooms;
+          if (!result.rooms.some(room => room.code === this.selectedWaitingRoom)) {
+            this.selectedWaitingRoom = result.rooms[0]?.code || '';
+            if (view === 'display') this.refresh(false);
+          }
+        }
+        if (result.lookups) this.lookupOptions = result.lookups;
+        this.dashboardLoading = this.detailLoading = false;
         this.markSynced();
       },
-      error: () => this.markOffline(),
+      error: error => {
+        if (context !== this.currentRefreshContext()) return;
+        settled = true;
+        this.directoryDirty ||= directory;
+        this.lookupsDirty ||= lookups;
+        this.dashboardLoading = this.detailLoading = false;
+        if (showIndicator) this.message = this.apiErrorMessage(error, 'Could not refresh live data. Retrying when connected.');
+        this.markOffline();
+      },
     });
+    return () => request.unsubscribe();
   }
 
   openSetting(setting: AppSetting): void { this.editingSetting = structuredClone(setting); this.editor = 'setting'; }
@@ -1451,14 +1633,13 @@ export class AppComponent implements OnDestroy {
     return this.dashboardPatients.filter(t => (t.room_number || '').trim() === this.selectedWaitRoom.trim());
   }
   loadDashboardPatients(showLoading = true): void {
-    if (showLoading) { this.detailLoading = true; this.dashboardPatients = []; }
+    if (showLoading) this.detailLoading = true;
     this.detailError = '';
-    const detail = this.dashboardDetail;
-    this.api.dashboardPatients(detail, this.dashboardPriority).subscribe({next: rows => { if (detail === this.dashboardDetail) { this.dashboardPatients = rows; this.detailLoading = false; } }, error: error => { if (detail === this.dashboardDetail) { this.detailLoading = false; this.detailError = this.apiErrorMessage(error, 'Could not load patient details.'); } }});
+    this.refresh(showLoading);
   }
   @HostListener('window:popstate') restorePage(): void {
     const params = new URLSearchParams(location.search); const view = (params.get('view') || 'dashboard') as View;
-    if (this.canView(view)) { this.view = view; this.dashboardDetail = params.get('detail') || ''; this.doctorOpened = false; this.refresh(); }
+    if (this.canView(view)) { this.view = view; this.dashboardDetail = params.get('detail') || ''; this.doctorOpened = false; this.refresh(); this.connectRealtime(); }
   }
   leaveDisplay(): void { this.setView(this.canView(this.previousView) ? this.previousView : 'settings'); }
   openClaim(): void {
@@ -1494,19 +1675,43 @@ export class AppComponent implements OnDestroy {
     this.refresh();
   }
 
-  private connectRealtime(): void {
-    if (!this.selectedWaitingRoom) return;
+  private connectRealtime(force = false): void {
+    if (!this.liveView() || this.isDemo || !this.currentUser || this.currentUser.must_change_password) {
+      this.realtimeSubscription?.unsubscribe();
+      return;
+    }
+    if (!force && this.realtimeSubscription && !this.realtimeSubscription.closed) return;
     this.realtimeSubscription?.unsubscribe();
-    this.realtimeSubscription = this.realtime.connect(this.selectedWaitingRoom).subscribe((event) => {
-      if (event.type === 'patient.called') {
-        // Fetch this display's room-specific queue while retaining the global call.
-        this.refresh();
-        return;
+    this.realtimeSubscription = this.realtime.connect().subscribe(event => {
+      if (event.type === 'connection.ready') {
+        if (this.reconnectSeen) this.directoryDirty = this.lookupsDirty = this.accessDirty = true;
+        this.reconnectSeen = true;
+        this.refresh(false); // Includes any updates missed while disconnected.
+      } else if (event.type === 'data.changed') {
+        const topics = event.topics || [];
+        this.directoryDirty ||= topics.includes('directory');
+        this.lookupsDirty ||= topics.includes('lookups');
+        this.accessDirty ||= topics.includes('access');
+        if (topics.some(topic => ['queue', 'directory', 'lookups', 'access'].includes(topic))) this.refresh(false);
       }
-      if (!event.display) return;
-      this.displayState = event.display;
-      this.speakDisplay(event.display);
     });
+  }
+
+  @HostListener('document:visibilitychange') onVisibilityChange(): void {
+    if (document.hidden) { this.refreshScheduler.cancel(); this.isRefreshing = false; return; }
+    if (!this.liveView()) return;
+    this.connectRealtime();
+    this.refresh(false);
+  }
+
+  @HostListener('window:online') onNetworkOnline(): void {
+    this.connectRealtime(true);
+    this.refresh(false);
+  }
+
+  @HostListener('window:offline') onNetworkOffline(): void {
+    this.refreshScheduler.cancel();
+    this.markOffline();
   }
 
   realtimeLabel(): string {

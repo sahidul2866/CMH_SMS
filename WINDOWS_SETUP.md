@@ -10,19 +10,14 @@ not fall back to SQLite when PostgreSQL is unavailable.
    `frontend\node_modules`, and development caches from the old PC. This does
    not transfer existing patient records.
 2. Install Python 3.12 (enable Add Python to PATH) and Node.js 22 LTS. The launcher
-   can attempt Python installation through WinGet if Python is missing.
-3. Build the current frontend in Command Prompt:
-
-   ```bat
-   cd /d C:\CMH\CMH_SMS\frontend
-   npm ci
-   npm run build
-   ```
-
-   Keep `frontend\dist`: the launcher serves this build and does not build it.
-4. Right-click `RUN_WINDOWS.bat` and choose **Run as administrator**. Keep internet
-   connected for dependency, PostgreSQL and voice-model downloads.
-5. If PostgreSQL is missing, setup opens its installer through WinGet. Use port
+   can attempt Python and Node.js installation through WinGet if missing.
+3. Right-click `RUN_WINDOWS.bat` and choose **Run as administrator**. Keep internet
+   connected for dependency, PostgreSQL and voice-model downloads. Like `run.sh`,
+   the launcher installs frontend dependencies with `npm ci` when `node_modules`
+   is missing and builds the current source with `npm run build` on every launch.
+   No manual frontend build or bundled `frontend\dist` is required. Build failures
+   stop setup before the server starts.
+4. If PostgreSQL is missing, setup opens its installer through WinGet. Use port
    **5432**, install the database server, and remember the `postgres` administrator
    password. Enter that password at the launcher's hidden password prompt. For an
    existing local installation, enter its existing administrator password.
@@ -71,8 +66,8 @@ Creating a new PostgreSQL database does not transfer records from another PC.
 ## Subsequent runs and automatic startup
 
 Run `RUN_WINDOWS.bat` again. It applies pending migrations and idempotent seed
-updates using the saved PostgreSQL connection. Rebuild with `npm run build` after
-frontend source changes.
+updates using the saved PostgreSQL connection and rebuilds the current frontend
+source automatically. Stop the existing server before relaunching.
 
 After setup succeeds, run `INSTALL_AUTOSTART_WINDOWS.bat` as administrator under
 the same Windows account used for setup. It starts the server at that user's
@@ -116,7 +111,8 @@ PostgreSQL version. Keep backups outside the project and verify restores.
   application connection through `CMH_SMS_DATABASE_URL`; setup does not reset it.
 - **Multiple PostgreSQL services/non-default port:** supply the intended existing
   database URL explicitly.
-- **Missing frontend:** run `npm ci` and `npm run build` in `frontend`.
+- **Frontend build failure:** fix the reported npm/build error and rerun the launcher.
+  If dependencies changed, run `npm ci` in `frontend` first.
 - **Port 8100 occupied:** stop the confirmed existing app before relaunching.
 
 This launcher defaults to development HTTP settings. For approved production
