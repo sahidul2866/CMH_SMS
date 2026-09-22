@@ -91,8 +91,9 @@ def setup() -> None:
         return
     if not config:
         if (ROOT / 'backend' / 'data' / 'cmh_sms.db').exists():
-            raise ValueError('An existing SQLite database was found. Its records are not migrated automatically. '
-                             'Migrate them to PostgreSQL and set CMH_SMS_DATABASE_URL explicitly before continuing.')
+            print('NOTICE: Existing backend/data/cmh_sms.db is preserved and will not be used. '
+                  'Continuing with PostgreSQL setup. SQLite records are not imported; '
+                  'restore a PostgreSQL backup or arrange migration if you need existing records.')
         password = secrets.token_hex(24)
         config = {'url': f'postgresql+psycopg://cmh_sms:{password}@127.0.0.1:5432/cmh_sms',
                   'managed_local': True, 'provisioned': False}
@@ -119,6 +120,9 @@ def environment() -> dict[str, str]:
     env = dict(os.environ)
     env['CMH_SMS_DATABASE_URL'] = validate_url(value)
     env['CMH_SMS_DATABASE_MODE'] = 'postgres'
+    # A copied .env may point the optional snapshot at a legacy database.
+    # Windows source launchers use PostgreSQL only and preserve SQLite files.
+    env['CMH_SMS_SQLITE_REPLICA'] = 'false'
     return env
 
 

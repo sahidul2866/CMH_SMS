@@ -60,9 +60,12 @@ it for migrations, seeding, normal startup and automatic startup. Prefer using
 `.setup\postgres.json` for subsequent launches; an explicit environment URL takes
 precedence. SQLite URLs are rejected.
 
-Existing SQLite files are never deleted or imported automatically. If setup
-finds an old SQLite database without a saved PostgreSQL configuration, it stops.
-Arrange migration of its records, then explicitly select the PostgreSQL URL.
+Existing SQLite files are preserved and do not block PostgreSQL setup. The
+launcher prints a notice when it finds `backend\data\cmh_sms.db`; this is not
+a PostgreSQL error. SQLite records are not imported automatically. Restore a
+PostgreSQL backup or arrange migration if those records are needed. The Windows
+launchers disable the optional SQLite snapshot so copied snapshot settings cannot
+overwrite a legacy SQLite database.
 Creating a new PostgreSQL database does not transfer records from another PC.
 
 ## Subsequent runs and automatic startup

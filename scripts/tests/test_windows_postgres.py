@@ -32,14 +32,16 @@ class PostgresLauncherTests(unittest.TestCase):
                 pg.setup()
         self.assertFalse(pg.CONFIG.exists())
 
-    def test_existing_sqlite_requires_explicit_migration(self):
+    def test_existing_sqlite_is_preserved_and_does_not_block_postgres(self):
         database = self.root / 'backend/data/cmh_sms.db'
         database.parent.mkdir(parents=True)
         database.write_bytes(b'existing records')
-        with self.assertRaisesRegex(ValueError, 'not migrated automatically'):
+        with patch.object(pg.subprocess, 'run'), patch.object(pg, 'provision') as provision, patch.object(pg, 'connect'), patch('builtins.print') as output:
             pg.setup()
         self.assertEqual(database.read_bytes(), b'existing records')
-        self.assertFalse(pg.CONFIG.exists())
+        self.assertTrue(pg.load_config()['provisioned'])
+        provision.assert_called_once()
+        self.assertTrue(any('records are not imported' in str(call) for call in output.call_args_list))
 
     def test_remote_url_is_verified_persisted_and_used_for_restart(self):
         url = 'postgresql://app:p%40ss%25word@server:5433/hospital'
@@ -49,6 +51,7 @@ class PostgresLauncherTests(unittest.TestCase):
             provision.assert_not_called()
         env = pg.environment()
         self.assertEqual(env['CMH_SMS_DATABASE_MODE'], 'postgres')
+        self.assertEqual(env['CMH_SMS_SQLITE_REPLICA'], 'false')
         self.assertEqual(env['CMH_SMS_DATABASE_URL'], url.replace('postgresql:', 'postgresql+psycopg:'))
 
     def test_connection_failure_does_not_replace_saved_config(self):
@@ -85,6 +88,12 @@ class PostgresLauncherTests(unittest.TestCase):
             pg.provision({'url': 'postgresql://cmh_sms:secret@localhost/cmh_sms'})
         self.assertEqual(admin.execute.call_count, 2)
         self.assertTrue(all(call.args[0].startswith('SELECT') for call in admin.execute.call_args_list))
+
+    def test_copied_snapshot_settings_cannot_overwrite_legacy_sqlite(self):
+        pg.save_config({'url': 'postgresql://app:secret@localhost/cmh_sms'})
+        with patch.dict(os.environ, {'CMH_SMS_SQLITE_REPLICA': 'true',
+                                    'CMH_SMS_SQLITE_REPLICA_PATH': 'data/cmh_sms.db'}):
+            self.assertEqual(pg.environment()['CMH_SMS_SQLITE_REPLICA'], 'false')
 
     def test_module_launch_inherits_saved_postgres(self):
         pg.save_config({'url': 'postgresql://app:secret@localhost/cmh_sms'})
