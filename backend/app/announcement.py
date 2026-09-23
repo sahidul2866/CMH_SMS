@@ -3,14 +3,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import logging
+import time
+from uuid import uuid4
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from string import Template
 from typing import Any
 
 from .bangla_names import suggest_bengali_name
+from .observability import log_event, request_id_context
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,8 @@ class Announcement:
     voice_mode: str = "auto"
     cache_max_files: int = 40
     patient_name_bn: str | None = None
+    announcement_id: str = field(default_factory=lambda: uuid4().hex)
+    originating_request_id: str | None = None
 
 
 class AnnouncementEngine:
@@ -63,6 +69,7 @@ class AnnouncementEngine:
 
     def set_announcements_enabled(self, enabled: bool) -> None:
         self.announcements_enabled = enabled
+        log_event("audio.policy_changed", enabled=enabled)
         if not enabled:
             self._policy_generation += 1
             while True:
@@ -75,6 +82,7 @@ class AnnouncementEngine:
     def enqueue(self, token: Any, settings: dict | None = None) -> bool:
         values = settings or {}
         if not self.enabled or not self.announcements_enabled or values.get("enabled", True) is False:
+            log_event("audio.suppressed", enabled=self.enabled, announcements_enabled=self.announcements_enabled)
             return False
         language = values.get("language")
         if not language:
@@ -86,6 +94,7 @@ class AnnouncementEngine:
                 language = "en"
         item = Announcement(
             token_number=token.token_number,
+            originating_request_id=request_id_context.get(),
             patient_name=token.patient_name,
             patient_name_bn=getattr(token, "patient_name_bn", None),
             service_number=getattr(token, "service_number", None),
@@ -98,6 +107,7 @@ class AnnouncementEngine:
             cache_max_files=max(10, min(int(values.get("cache_max_files", 40)), 500)),
         )
         self._queue.put_nowait(item)
+        log_event("audio.queued", announcement_id=item.announcement_id, language=item.language, voice_mode=item.voice_mode)
         return True
 
     def status(self) -> dict:
@@ -123,6 +133,9 @@ class AnnouncementEngine:
             item = await self._queue.get()
             self.current_announcement = item.token_number
             generation = self._policy_generation
+            started = time.perf_counter()
+            audio_context = request_id_context.set(item.originating_request_id)
+            log_event("audio.started", announcement_id=item.announcement_id, language=item.language, voice_mode=item.voice_mode)
             try:
                 if not self.announcements_enabled:
                     continue
@@ -135,12 +148,17 @@ class AnnouncementEngine:
                 if self.announcements_enabled and generation == self._policy_generation:
                     self.last_announcement = item.token_number
                     self.completed_count += 1
+                    log_event("audio.completed", announcement_id=item.announcement_id, duration_ms=round((time.perf_counter() - started) * 1000))
+                else:
+                    log_event("audio.cancelled", announcement_id=item.announcement_id)
                 self.last_error = None
             except Exception as exc:
+                log_event("audio.failed", level=logging.ERROR, error=exc, announcement_id=item.announcement_id)
                 self.last_error = str(exc)
             finally:
                 self.current_announcement = None
                 self._queue.task_done()
+                request_id_context.reset(audio_context)
 
     def _prepare(self, item: Announcement) -> list[Path]:
         language = item.language.lower()
@@ -151,8 +169,8 @@ class AnnouncementEngine:
             if getattr(item, "voice_mode", "auto") == "offline_neural" and voice == "bn_female":
                 try:
                     return self._synthesise_offline_bengali(text, item.rate)
-                except Exception:
-                    pass
+                except Exception as error:
+                    log_event("audio.fallback", level=logging.WARNING, error=error, source="offline_neural", target="basic_offline")
             if allow_neural:
                 return self._synthesise(text, voice, item.rate)
             return self._synthesise(text, voice, item.rate, allow_neural=False)
@@ -199,7 +217,8 @@ class AnnouncementEngine:
         }:
             try:
                 return self._synthesise_neural(text, voice, rate)
-            except Exception:
+            except Exception as error:
+                log_event("audio.fallback", level=logging.WARNING, error=error, source="online_neural", target="basic_offline")
                 # Announcements must still work during an internet outage.
                 # The existing offline system voice remains the safe fallback.
                 pass

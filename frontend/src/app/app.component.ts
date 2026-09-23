@@ -1,3 +1,4 @@
+import { ClientLogService } from './client-log.service';
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -22,6 +23,7 @@ const YEAR_START_LOCAL = `${TODAY_LOCAL.slice(0, 4)}-01-01`;
   styleUrl: './app.component.scss',
 })
 export class AppComponent implements OnDestroy {
+  private readonly clientLogs = inject(ClientLogService);
   private readonly api = inject(QueueApiService);
   private readonly realtime = inject(RealtimeService);
   private refreshSubscription?: Subscription;
@@ -889,7 +891,7 @@ export class AppComponent implements OnDestroy {
     const url = new URL(window.location.href);
     url.searchParams.set('view', view);
     url.searchParams.delete('detail');
-    window.history.pushState({}, '', url);
+    window.history.pushState({}, '', url); this.clientLogs.navigation();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     this.refresh();
     this.connectRealtime();
@@ -1603,7 +1605,7 @@ export class AppComponent implements OnDestroy {
   openDashboardDetail(detail: string): void {
     this.dashboardDetail = detail;
     this.selectedWaitRoom = '';
-    const url = new URL(window.location.href); url.searchParams.set('detail', detail); window.history.pushState({}, '', url);
+    const url = new URL(window.location.href); url.searchParams.set('detail', detail); window.history.pushState({}, '', url); this.clientLogs.navigation();
     this.loadDashboardPatients(); window.scrollTo({ top: 0 });
   }
   get dashboardDetailTitle(): string { return ({ all: 'All patients today', waiting: 'Waiting patients', called: 'Called patients', in_progress: 'Patients in service', completed: 'Completed patients', vip: 'VIP patients', wait: 'Average wait time per room' } as Record<string,string>)[this.dashboardDetail] || 'Patients'; }

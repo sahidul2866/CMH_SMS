@@ -289,3 +289,34 @@ are not HTTP data refreshes. The server rechecks session access on each heartbea
 
 Run the refresh scheduler checks with `node --experimental-strip-types --test
 frontend/tests/refresh-scheduler.test.mjs` on Node.js 22.6+ (Node.js 24 recommended).
+
+### Application diagnostics
+
+Structured JSON logs are written to `backend/data/logs/application.jsonl`.
+Files rotate at 10 MiB, retaining five backups. Set `CMH_SMS_LOG_DIR` to change
+this directory or `CMH_SMS_LOG_LEVEL=DEBUG` for additional diagnostic detail.
+Restart the application after changing these environment variables.
+
+Diagnostics include application startup/shutdown, HTTP status and duration,
+request IDs, committed audit action metadata, realtime connections and changes,
+audio queue/playback/fallback/failure events, SMS outcomes, and browser errors,
+navigation, network changes and failed requests. Browser events are batched,
+deduplicated and rate limited; they do not poll or retry failed uploads.
+Each HTTP response includes `X-Request-ID` for correlating related server logs.
+Exception types and stack locations are retained; diagnostic logs omit raw
+exception messages, request bodies, query strings, credentials and patient names.
+Detailed staff actions remain in the existing database audit trail. Logs are local
+to each application instance; archive rotated files externally if longer retention
+is needed. Abrupt process termination or disconnected browsers may lose pending events.
+
+Follow logs on macOS/Linux:
+
+```sh
+tail -f backend/data/logs/application.jsonl
+```
+
+On Windows PowerShell:
+
+```powershell
+Get-Content backend/data/logs/application.jsonl -Tail 100 -Wait
+```

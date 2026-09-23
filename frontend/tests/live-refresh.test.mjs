@@ -15,10 +15,10 @@ const temporary = await mkdtemp(path.join(root, 'node_modules/.live-refresh-test
 after(() => rm(temporary, { recursive: true, force: true }));
 const output = path.join(temporary, 'component.mjs');
 await build({
-  stdin: { contents: `export {AppComponent} from './src/app/app.component'; export {QueueApiService} from './src/app/queue-api.service'; export {RealtimeService} from './src/app/realtime.service';`, resolveDir: root },
+  stdin: { contents: `export {ClientLogService} from './src/app/client-log.service'; export {AppComponent} from './src/app/app.component'; export {QueueApiService} from './src/app/queue-api.service'; export {RealtimeService} from './src/app/realtime.service';`, resolveDir: root },
   tsconfig: path.join(root, 'tsconfig.json'), bundle: true, packages: 'external', platform: 'node', format: 'esm', outfile: output,
 });
-const { AppComponent, QueueApiService, RealtimeService } = await import(pathToFileURL(output));
+const { ClientLogService, AppComponent, QueueApiService, RealtimeService } = await import(pathToFileURL(output));
 
 function fixture(t) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: Date.now() });
@@ -46,7 +46,7 @@ function fixture(t) {
   const events = new Subject();
   const status = new BehaviorSubject('connected');
   const realtime = {status$: status, connect: () => events};
-  const injector = Injector.create({providers: [{provide: QueueApiService, useValue: api}, {provide: RealtimeService, useValue: realtime}]});
+  const injector = Injector.create({providers: [{provide: ClientLogService, useValue: {navigation() {}, record() {}}}, {provide: QueueApiService, useValue: api}, {provide: RealtimeService, useValue: realtime}]});
   const app = runInInjectionContext(injector, () => new AppComponent());
   t.after(() => { app.ngOnDestroy(); injector.destroy(); });
   events.next({type: 'connection.ready'});
@@ -119,4 +119,32 @@ test('reconnection refreshes permissions and current data without restarting pol
   const before = {...counts};
   t.mock.timers.tick(120000);
   assert.deepEqual(counts, before);
+});
+
+test('browser diagnostics batch and deduplicate errors without retrying a failed upload', async t => {
+  const {HttpBackend, HttpResponse} = await import('@angular/common/http');
+  t.mock.timers.enable({apis: ['setTimeout', 'Date'], now: Date.now()});
+  globalThis.document = {documentElement: {dataset: {}}};
+  const requests = [];
+  const responses = [];
+  const injector = Injector.create({providers: [{provide: HttpBackend, useValue: {handle(request) {
+    requests.push(request); const response = new Subject(); responses.push(response); return response;
+  }}}]});
+  const logs = runInInjectionContext(injector, () => new ClientLogService());
+  const error = new Error('Private patient name and password');
+  logs.error(error); logs.error(error);
+  t.mock.timers.tick(1000);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].body.events.length, 1);
+  assert.ok(!JSON.stringify(requests[0].body).includes('Private patient'));
+  responses[0].error(new Error('Server unavailable'));
+  t.mock.timers.tick(120000);
+  assert.equal(requests.length, 1, 'failed diagnostics never start a retry timer');
+  logs.record({event: 'network_state', state: 'online'});
+  t.mock.timers.tick(1000);
+  assert.equal(requests.length, 2);
+  responses[1].next(new HttpResponse({status: 204})); responses[1].complete();
+  t.mock.timers.tick(120000);
+  assert.equal(requests.length, 2, 'idle diagnostics never poll');
+  injector.destroy();
 });

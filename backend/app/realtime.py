@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+
+from .observability import log_event
 from collections import defaultdict
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -21,6 +24,7 @@ class WaitingRoomHub:
         async with self._lock:
             self._connections[waiting_room].add(websocket)
         await websocket.send_json(self.event(waiting_room, "connection.ready", "connected"))
+        log_event("realtime.connected", channel="updates" if waiting_room == "application" else "display", connections=self.connection_count(waiting_room))
 
     async def disconnect(self, waiting_room: str, websocket: WebSocket) -> None:
         async with self._lock:
@@ -30,6 +34,7 @@ class WaitingRoomHub:
             clients.discard(websocket)
             if not clients:
                 self._connections.pop(waiting_room, None)
+        log_event("realtime.disconnected", channel="updates" if waiting_room == "application" else "display", connections=self.connection_count(waiting_room))
 
     def event(self, waiting_room: str, event_type: str, reason: str, **payload) -> dict:
         self._sequences[waiting_room] += 1
@@ -44,6 +49,7 @@ class WaitingRoomHub:
         }
 
     async def broadcast(self, waiting_room: str, event_type: str, reason: str, **payload) -> None:
+        log_event("realtime.event", channel="display", event_type=event_type, action=reason)
         event = self.event(waiting_room, event_type, reason, **payload)
         async with self._lock:
             clients = list(self._connections.get(waiting_room, set()))
@@ -58,6 +64,7 @@ class WaitingRoomHub:
 
     async def broadcast_all(self, waiting_room: str, event_type: str, reason: str, **payload) -> None:
         """Send an announcement to every connected waiting-room display."""
+        log_event("realtime.event", channel="display", event_type=event_type, action=reason)
         event = self.event(waiting_room, event_type, reason, **payload)
         async with self._lock:
             clients = [(room, client) for room, room_clients in self._connections.items() for client in room_clients]
@@ -106,6 +113,7 @@ class ChangeHub(WaitingRoomHub):
     """Patient-free invalidation channel; clients refetch through scoped APIs."""
 
     async def publish(self, topics: list[str]) -> None:
+        log_event('realtime.published', topics=topics)
         event = self.event('application', 'data.changed', 'updated', topics=topics)
         async with self._lock:
             clients = list(self._connections.get('application', set()))
@@ -113,7 +121,8 @@ class ChangeHub(WaitingRoomHub):
         async def send(client: WebSocket) -> None:
             try:
                 await asyncio.wait_for(client.send_json(event), timeout=2)
-            except Exception:
+            except Exception as error:
+                log_event('realtime.delivery_failed', level=logging.WARNING, error=error)
                 await self.disconnect('application', client)
                 try:
                     await asyncio.wait_for(client.close(code=1013), timeout=1)

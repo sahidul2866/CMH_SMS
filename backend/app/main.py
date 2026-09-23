@@ -29,6 +29,9 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -114,6 +117,7 @@ from .schemas import (
     SlotRead,
     TokenCreate,
     BengaliNameSuggestionRequest,
+    ClientDiagnosticBatch,
     TokenRead,
     TokenRoomUpdateRequest,
     TransferRequest,
@@ -123,27 +127,38 @@ from .schemas import (
     WaitingRoomCreate,
 )
 from .service import QueueService
+from .observability import configure_logging, install_audit_logging, log_event, request_id_context
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    validate_production_config()
-    from .database import refresh_sqlite_replica
-    refresh_sqlite_replica()
-    with SessionLocal() as db:
-        db.execute(delete(UserSession).where(UserSession.expires_at <= datetime.utcnow()))
-        db.commit()
-        announcement_setting = db.get(AppSetting, "announcement")
-        announcement_engine.set_announcements_enabled(not announcement_setting or announcement_setting.value.get("enabled", True))
-    await announcement_engine.start()
-    await sms_outbox_worker.start()
-    yield
-    await sms_outbox_worker.stop()
-    await announcement_engine.stop()
+    log_event('application.starting')
+    try:
+        validate_production_config()
+        from .database import refresh_sqlite_replica
+        refresh_sqlite_replica()
+        with SessionLocal() as db:
+            db.execute(delete(UserSession).where(UserSession.expires_at <= datetime.utcnow()))
+            db.commit()
+            announcement_setting = db.get(AppSetting, "announcement")
+            announcement_engine.set_announcements_enabled(not announcement_setting or announcement_setting.value.get("enabled", True))
+        await announcement_engine.start()
+        await sms_outbox_worker.start()
+        log_event('application.ready')
+        yield
+    except Exception as error:
+        log_event('application.failed', level=logging.ERROR, error=error)
+        raise
+    finally:
+        await sms_outbox_worker.stop()
+        await announcement_engine.stop()
+        log_event('application.stopped')
 
 
 ENVIRONMENT = os.getenv("CMH_SMS_ENVIRONMENT", "development").lower()
-logger = logging.getLogger("uvicorn.error")
+LOG_FILE = configure_logging()
+install_audit_logging()
+logger = logging.getLogger("cmh")
 login_attempts: dict[str, list[float]] = {}
 login_attempts_lock = threading.Lock()
 
@@ -266,49 +281,82 @@ if cors_origins or allow_origin_regex:
 
 @app.middleware("http")
 async def production_headers_and_request_log(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID", "")[:80] or secrets.token_hex(12)
-    started = time.perf_counter()
-    response = await call_next(request)
-    topics = mutation_topics(request.method, request.url.path, response.status_code)
-    if topics:
+    supplied_id = request.headers.get("X-Request-ID", "")
+    request_id = supplied_id if re.fullmatch(r"[A-Za-z0-9_-]{1,80}", supplied_id) else secrets.token_hex(12)
+    request_context = request_id_context.set(request_id)
+    try:
+        started = time.perf_counter()
         try:
-            await change_hub.publish(topics)
-        except Exception:
-            # A notification failure must not turn a committed write into an error.
-            logger.exception("Realtime change notification failed")
-    response.headers["X-Request-ID"] = request_id
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; "
-        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
-    )
-    content_type = response.headers.get("content-type", "")
-    if request.url.path.startswith("/api/") or content_type.startswith("text/html"):
-        response.headers["Cache-Control"] = "no-store"
-    elif re.search(r"-[A-Z0-9]{8,}\.(?:js|css)$", request.url.path):
-        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    else:
-        response.headers["Cache-Control"] = "no-cache"
-    if request.url.scheme == "https" or os.getenv("CMH_SMS_PUBLIC_HTTPS", "false").lower() in {"1", "true", "yes"}:
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    logger.info(
-        json.dumps(
-            {
-                "event": "http_request",
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "status": response.status_code,
-                "duration_ms": round((time.perf_counter() - started) * 1000, 2),
-            },
-            separators=(",", ":"),
+            response = await call_next(request)
+        except Exception as error:
+            log_event('http.unhandled_error', level=logging.ERROR, error=error,
+                      method=request.method, route=getattr(request.scope.get('route'), 'path', '<unmatched>'))
+            response = JSONResponse({'detail': 'An unexpected server error occurred.', 'request_id': request_id}, status_code=500)
+        topics = mutation_topics(request.method, request.url.path, response.status_code)
+        if topics:
+            try:
+                await change_hub.publish(topics)
+            except Exception:
+                # A notification failure must not turn a committed write into an error.
+                logger.exception("Realtime change notification failed")
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; "
+            "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         )
-    )
-    return response
+        content_type = response.headers.get("content-type", "")
+        if request.url.path.startswith("/api/") or content_type.startswith("text/html"):
+            response.headers["Cache-Control"] = "no-store"
+        elif re.search(r"-[A-Z0-9]{8,}\.(?:js|css)$", request.url.path):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+        if request.url.scheme == "https" or os.getenv("CMH_SMS_PUBLIC_HTTPS", "false").lower() in {"1", "true", "yes"}:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        log_event('http.request', level=logging.ERROR if response.status_code >= 500 else logging.WARNING if response.status_code >= 400 else logging.INFO,
+                  method=request.method, route=getattr(request.scope.get('route'), 'path', '<unmatched>'),
+                  status=response.status_code, duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                  actor=getattr(request.state, 'actor', None))
+        return response
+    finally:
+        request_id_context.reset(request_context)
+
+
+@app.exception_handler(RequestValidationError)
+async def log_validation_error(request: Request, error: RequestValidationError):
+    log_event('http.validation_failed', level=logging.WARNING,
+              route=getattr(request.scope.get('route'), 'path', '<unmatched>'),
+              fields=[{'field': '.'.join(str(part) for part in item['loc']), 'code': item['type']} for item in error.errors()[:20]])
+    return await request_validation_exception_handler(request, error)
+
+
+client_log_limits: dict[str, tuple[float, int]] = {}
+client_log_lock = threading.Lock()
+
+
+@app.post("/api/v1/client-events", status_code=204)
+def receive_client_events(payload: ClientDiagnosticBatch, user: User = Depends(current_user)):
+    now = time.monotonic()
+    with client_log_lock:
+        # Expire old counters so this bookkeeping remains bounded.
+        for key, (start, _) in list(client_log_limits.items()):
+            if now - start >= 60:
+                client_log_limits.pop(key, None)
+        start, count = client_log_limits.get(user.id, (now, 0))
+        if count + len(payload.events) > 120:
+            raise HTTPException(429, 'Diagnostic event limit reached')
+        client_log_limits[user.id] = (start, count + len(payload.events))
+    for item in payload.events:
+        fields = item.model_dump(exclude={'event', 'level', 'endpoint', 'request_id'}, exclude_none=True)
+        route = next((getattr(route, 'path', '<unmatched>') for route in app.routes
+                      if getattr(route, 'path_regex', None) and route.path_regex.fullmatch(item.endpoint)), '<unmatched>') if item.endpoint else None
+        log_event('client.' + item.event, level={'info': logging.INFO, 'warning': logging.WARNING, 'error': logging.ERROR}[item.level],
+                  actor=user.username, origin='browser', related_request_id=item.request_id or None, route=route, **fields)
 
 
 @app.get("/api/v1/health")
@@ -402,6 +450,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
         )
         db.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid username or password")
+    request.state.actor = user.username
     raw = new_session(db, user)
     clear_login_rate_limit(client)
     db.add(
@@ -1267,6 +1316,7 @@ async def application_realtime(websocket: WebSocket):
 
     code = access_code()
     if code:
+        log_event("realtime.access_denied", level=logging.WARNING, code=code)
         await websocket.close(code=code)
         return
     await change_hub.connect('application', websocket)
@@ -1278,6 +1328,7 @@ async def application_realtime(websocket: WebSocket):
                 if code:
                     await websocket.close(code=code)
                     break
+                log_event('realtime.heartbeat', level=logging.DEBUG, channel='updates')
                 await websocket.send_json(change_hub.event('application', 'heartbeat', 'pong'))
     except WebSocketDisconnect:
         pass
@@ -1485,7 +1536,7 @@ def settings(_: User = Depends(require_permission("settings.manage")), db: Sessi
 
 @app.put("/api/v1/settings/{key}")
 async def update_setting(
-    key: str, payload: SettingUpdate, _: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)
+    key: str, payload: SettingUpdate, user: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)
 ):
     if key in {"registration_fields", "mri_summary_mapping"}:
         raise HTTPException(422, "Use the dedicated settings endpoint")
@@ -1493,6 +1544,7 @@ async def update_setting(
     if not setting:
         raise HTTPException(404, "Setting not found")
     setting.value = validated_setting(key, {**setting.value, **payload.value})
+    db.add(AuditEvent(action="settings.updated", actor=user.username, detail={"setting": key, "changed_keys": sorted(payload.value)}))
     db.commit()
     db.refresh(setting)
     if key == "announcement":

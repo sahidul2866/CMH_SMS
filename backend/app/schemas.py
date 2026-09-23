@@ -379,3 +379,29 @@ class HolidayRead(HolidayCreate):
 
 class BengaliNameSuggestionRequest(BaseModel):
     patient_name: str = Field(min_length=2, max_length=160)
+
+
+class ClientStackFrame(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    file: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,120}$')
+    line: int = Field(ge=0, le=10000000)
+    column: int = Field(ge=0, le=10000000)
+
+
+class ClientDiagnosticEvent(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    event: Literal['error', 'http_failed', 'realtime_state', 'navigation', 'network_state']
+    level: Literal['info', 'warning', 'error'] = 'info'
+    view: str = Field(default='', pattern=r'^[a-z-]{0,32}$')
+    state: Literal['connecting', 'connected', 'recovering', 'offline', 'online'] | None = None
+    endpoint: str = Field(default='', max_length=240, pattern=r'^[/A-Za-z0-9_.{}-]*$')
+    status: int | None = Field(default=None, ge=0, le=599)
+    error_type: str = Field(default='', pattern=r'^[A-Za-z0-9_$.-]{0,80}$')
+    error_code: str = Field(default='', pattern=r'^(NG[0-9]+)?$')
+    request_id: str = Field(default='', pattern=r'^[A-Za-z0-9_-]{0,80}$')
+    frames: list[ClientStackFrame] = Field(default_factory=list, max_length=12)
+
+
+class ClientDiagnosticBatch(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    events: list[ClientDiagnosticEvent] = Field(min_length=1, max_length=20)

@@ -1946,3 +1946,25 @@ def test_radiographer_receives_change_hints_without_display_access():
         assert socket.receive_json()['type'] == 'connection.ready'
         client.post(f"/api/v1/doctors/dr-khan/tokens/{patient['id']}/call").raise_for_status()
         assert socket.receive_json()['topics'] == ['queue']
+
+
+def test_browser_diagnostics_are_bounded_authenticated_and_do_not_refresh_queue():
+    from app.main import client_log_limits
+    client_log_limits.clear()
+    payload = {'events': [{'event': 'http_failed', 'level': 'error', 'status': 500, 'endpoint': '/api/v1/tokens', 'request_id': 'related-request'}]}
+    with client.websocket_connect('/api/v1/realtime/updates') as socket:
+        assert socket.receive_json()['type'] == 'connection.ready'
+        response = client.post('/api/v1/client-events', json=payload, headers={'X-Request-ID': 'diagnostic-test'})
+        assert response.status_code == 204
+        assert response.headers['X-Request-ID'] == 'diagnostic-test'
+        socket.send_text('ping')
+        assert socket.receive_json()['type'] == 'heartbeat'
+    assert client.post('/api/v1/client-events', json={'events': [{'event': 'error', 'patient_name': 'Never accept this'}]}).status_code == 422
+    assert client.post('/api/v1/client-events', json={'events': payload['events'] * 21}).status_code == 422
+    client_log_limits.clear()
+    for _ in range(6):
+        assert client.post('/api/v1/client-events', json={'events': payload['events'] * 20}).status_code == 204
+    assert client.post('/api/v1/client-events', json=payload).status_code == 429
+    client.cookies.clear()
+    assert client.post('/api/v1/client-events', json=payload).status_code == 401
+    client_log_limits.clear()

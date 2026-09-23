@@ -94,6 +94,7 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
         '/api/v1/auth/password', '/api/v1/auth/logout', '/api/v1/auth/me',
     }:
         raise HTTPException(403, 'Change your temporary password before continuing')
+    request.state.actor = user.username
     return user
 
 

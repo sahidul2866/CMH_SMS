@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 
 from .database import SessionLocal
 from .models import SmsMessage
+from .observability import log_event
 
-logger = logging.getLogger("uvicorn.error")
+logger = logging.getLogger("cmh")
 
 
 class SmsService:
@@ -57,6 +58,7 @@ class SmsService:
             item.next_attempt_at = datetime.utcnow() + timedelta(minutes=2 ** max(item.attempts - 1, 0))
         item.claimed_at = None
         self.db.commit()
+        log_event("sms.delivery", level=logging.WARNING if item.status == "failed" else logging.INFO, message_id=item.id, status=item.status, attempts=item.attempts)
         return item
 
 

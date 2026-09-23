@@ -1,10 +1,17 @@
-import { Injectable } from '@angular/core';
+import { ClientLogService } from './client-log.service';
+import { Injectable, inject } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 
 import { RealtimeEvent, RealtimeStatus } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class RealtimeService {
+  private readonly logs = inject(ClientLogService);
+  private setStatus(state: RealtimeStatus): void {
+    if (state === this.statusSubject.value) return;
+    this.logs.record({ event: 'realtime_state', state });
+    this.statusSubject.next(state);
+  }
   private readonly statusSubject = new BehaviorSubject<RealtimeStatus>('offline');
   readonly status$ = this.statusSubject.asObservable();
 
@@ -25,7 +32,7 @@ export class RealtimeService {
       };
       const open = () => {
         if (closedByClient) return;
-        this.statusSubject.next(attempts ? 'recovering' : 'connecting');
+        this.setStatus(attempts ? 'recovering' : 'connecting');
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const connection = new WebSocket(`${protocol}//${window.location.host}/api/v1/realtime/updates`);
         socket = connection;
@@ -43,7 +50,7 @@ export class RealtimeService {
             lastMessage = Date.now();
             if (event.type === 'connection.ready') {
               attempts = 0;
-              this.statusSubject.next('connected');
+              this.setStatus('connected');
             }
             subscriber.next(event);
           } catch { /* Ignore malformed events. */ }
@@ -54,12 +61,12 @@ export class RealtimeService {
           clearTimers();
           if (closedByClient) return;
           if (event.code === 4401 || event.code === 4403) {
-            this.statusSubject.next('offline');
+            this.setStatus('offline');
             if (event.code === 4401) window.location.assign('/');
             return;
           }
           attempts += 1;
-          this.statusSubject.next(attempts < 4 ? 'recovering' : 'offline');
+          this.setStatus(attempts < 4 ? 'recovering' : 'offline');
           const delay = Math.min(1000 * 2 ** Math.min(attempts - 1, 5), 30000);
           reconnectTimer = window.setTimeout(open, delay + Math.random() * delay * 0.2);
         };
@@ -70,7 +77,7 @@ export class RealtimeService {
         closedByClient = true;
         clearTimers();
         socket?.close();
-        this.statusSubject.next('offline');
+        this.setStatus('offline');
       };
     });
   }
