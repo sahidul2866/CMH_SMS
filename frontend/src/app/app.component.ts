@@ -63,7 +63,6 @@ export class AppComponent implements OnDestroy {
   editingUser: AuthUser | null = null;
   roleDraft: RoleDefinition | null = null;
   editingLookup: LookupOption | null = null;
-  lookupVip = false;
   lookupWeight = 10;
   actionDialog: { token: QueueToken; action: string } | null = null;
   actionReason = '';
@@ -340,7 +339,21 @@ export class AppComponent implements OnDestroy {
   customFieldLabel(key: string): string { return this.customFields.find(field => field.key === key)?.label || key; }
   editingPatientId = '';
   registrationDoctorId = '';
-  occupancy: {id: string; name: string; room: string; occupied: boolean}[] = [];
+  releasingDoctorId = '';
+  canMakeAvailable(doctorId: string): boolean {
+    return this.hasPermission('queue.action') &&
+      ((this.currentUser?.access_profile || this.currentUser?.role) !== 'radiographer' || this.currentUser?.doctor_id === doctorId);
+  }
+  makeAvailable(person: {id: string; active_token_ids: string[]}): void {
+    if (this.releasingDoctorId || !this.canMakeAvailable(person.id)) return;
+    this.releasingDoctorId = person.id;
+    this.occupancyError = '';
+    this.api.makeAvailable(person.id, person.active_token_ids).subscribe({
+      next: () => { this.releasingDoctorId = ''; this.notify('Active patient completed · Radiographer available'); this.refresh(); },
+      error: error => { this.releasingDoctorId = ''; this.occupancyError = this.apiErrorMessage(error, 'Could not make radiographer available.'); this.refresh(); },
+    });
+  }
+  occupancy: {id: string; name: string; room: string; occupied: boolean; active_token_ids: string[]}[] = [];
   occupancyError = '';
   doctorDraft = {id: '', name: '', department: 'Radiology', designation: 'Radiographer', room_number: '', waiting_room_id: '', token_prefix: 'MRI'};
   doctorEditId = '';
@@ -1074,13 +1087,12 @@ export class AppComponent implements OnDestroy {
     this.newLookup = { category: item.category, value: item.value, label: item.label, sort_order: item.sort_order };
     this.lookupReportGroup = String(item.metadata_json['report_group'] || '');
     this.lookupReportCode = String(item.metadata_json['report_code'] || item.value);
-    this.lookupVip = item.metadata_json['priority'] === 'vip';
     this.lookupWeight = Number(item.metadata_json['weight'] ?? item.sort_order);
     this.editor = 'lookup';
   }
   openNewLookup(): void {
     this.lookupReportGroup = ''; this.lookupReportCode = '';
-    this.editingLookup = null; this.lookupVip = false; this.lookupWeight = 10;
+    this.editingLookup = null; this.lookupWeight = 10;
     this.newLookup = { category: this.selectedLookupCategory, value: '', label: '', sort_order: 0 }; this.editor = 'lookup';
   }
   saveLookup(): void {
@@ -1090,16 +1102,11 @@ export class AppComponent implements OnDestroy {
     const metadata = { ...(this.editingLookup?.metadata_json || {}) };
     if (this.selectedLookupCategory === 'rank_relationship') metadata['report_group'] = this.lookupReportGroup;
     if (this.reportCodes[this.selectedLookupCategory]) metadata['report_code'] = this.lookupReportCode;
-    if (this.selectedLookupCategory === 'rank_relationship') metadata['priority'] = this.lookupVip ? 'vip' : 'normal';
     if (this.selectedLookupCategory === 'priority_category') metadata['weight'] = this.lookupWeight;
     const payload = { ...this.newLookup, category: this.selectedLookupCategory, label,
       value: (this.newLookup.value.trim() || label).toLowerCase().replace(/[^a-z0-9._-]+/g, '_'), metadata_json: metadata };
     const request = this.editingLookup ? this.api.updateLookup(this.editingLookup.id, { label, sort_order: payload.sort_order, metadata_json: metadata }) : this.api.createLookup(payload);
     this.trackSettingsSave(request).subscribe({ next: item => { this.lookupOptions = [...this.lookupOptions.filter(old => old.id !== item.id), item]; this.editor = ''; this.notify('Dropdown option saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save option.') });
-  }
-  designationChanged(): void {
-    const designation = this.lookupOptions.find(item => item.category === 'rank_relationship' && item.value === this.form.rank);
-    if (designation?.metadata_json['priority'] === 'vip' || this.form.rank === 'vip') this.form.priority = 'vip';
   }
   lookupCategoryLabel(category: string): string {
     return ({ rank_relationship: 'Designation / Rank', patient_source: 'Patient source (OPD / Ward)', room_number: 'Room numbers', priority_category: 'Patient priority' } as Record<string,string>)[category] || category.replaceAll('_', ' ');

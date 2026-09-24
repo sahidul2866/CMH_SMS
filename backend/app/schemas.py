@@ -405,3 +405,7 @@ class ClientDiagnosticEvent(BaseModel):
 class ClientDiagnosticBatch(BaseModel):
     model_config = ConfigDict(extra='forbid')
     events: list[ClientDiagnosticEvent] = Field(min_length=1, max_length=20)
+
+
+class MakeAvailableRequest(BaseModel):
+    active_token_ids: list[str] = Field(min_length=1, max_length=100)

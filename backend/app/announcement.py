@@ -192,13 +192,12 @@ class AnnouncementEngine:
             )
 
         if language in {"en", "english", "both"} or not paths:
-            doctor_name = getattr(item, "doctor_name", "your radiographer")
             service_number = getattr(item, "service_number", None)
             identity = f"Service number {service_number}, {item.patient_name}" if service_number else item.patient_name
             paths.append(
                 synthesise(
                     f"{identity}, please proceed to "
-                    f"{doctor_name}, room {item.room_number}.",
+                    f"room {item.room_number}.",
                     "en_male",
                 )
             )

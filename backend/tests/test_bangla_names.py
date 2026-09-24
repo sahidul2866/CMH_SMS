@@ -58,7 +58,7 @@ def test_english_announcement_keeps_original_name(monkeypatch, tmp_path):
     item = Announcement(token_number='00001/26', patient_name='Rahim Uddin', patient_name_bn='রাহীম উদ্দীন',
                         service_number=None, doctor_name='Dr. Khan', room_number='205', language='en')
     engine._prepare(item)
-    assert calls == [('Rahim Uddin, please proceed to Dr. Khan, room 205.', 'en_male')]
+    assert calls == [('Rahim Uddin, please proceed to room 205.', 'en_male')]
 
 
 def test_queued_announcement_keeps_saved_bengali_spelling(monkeypatch):

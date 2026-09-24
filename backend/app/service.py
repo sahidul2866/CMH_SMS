@@ -46,9 +46,7 @@ class QueueService:
         if payload.patient_title:
             self._require_lookup("designation", payload.patient_title)
         if payload.rank:
-            designation = self._require_lookup("rank_relationship", payload.rank)
-            if (designation.metadata_json or {}).get("priority") == "vip" or payload.rank.lower() == "vip":
-                payload = payload.model_copy(update={"priority": "vip"})
+            self._require_lookup("rank_relationship", payload.rank)
         if payload.patient_source:
             self._require_lookup("patient_source", payload.patient_source)
         doctor = self.db.scalar(select(Doctor).where(Doctor.id == payload.doctor_id).with_for_update()) if payload.doctor_id else None
@@ -500,16 +498,10 @@ class QueueService:
         current = active_calls[0] if active_calls else None
         announcement = None
         if current:
-            doctor_name = current.doctor_name.strip()
-            lowered_name = doctor_name.lower()
-            for prefix in ("doctor ", "dr. ", "dr "):
-                if lowered_name.startswith(prefix):
-                    doctor_name = doctor_name[len(prefix) :].strip()
-                    break
             identity = f"{current.service_number}, {current.patient_name}" if current.service_number else current.patient_name
             announcement = (
                 f"{identity}. Please proceed to "
-                f"Doctor {doctor_name}, room {current.room_number}."
+                f"room {current.room_number}."
             )
         return DisplayRead(
             waiting_room=waiting_room,

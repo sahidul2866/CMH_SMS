@@ -130,7 +130,8 @@ def test_reception_to_display_flow():
     assert len(display["active_calls"]) == 1
     assert display["next_tokens"][0]["patient_name"] == "Karim A."
     assert "room 205" in display["announcement"]
-    assert "Doctor Dr." not in display["announcement"]
+    assert "Dr. Ayesha Khan" not in display["announcement"]
+    assert "Doctor" not in display["announcement"]
 
 
 def test_reception_report_filters_and_exports_complete_excel_table():
@@ -264,7 +265,7 @@ def test_bangla_announcement_is_one_continuous_voice_clip(monkeypatch, tmp_path)
     assert len(paths) == 2
     assert captured == [
         ("bn_female", "রোগী রহিম উদ্দিন, অনুগ্রহ করে কক্ষ নম্বর দুই শূন্য পাঁচ-এ যান।"),
-        ("en_male", "Rahim Uddin, please proceed to your radiographer, room 205."),
+        ("en_male", "Rahim Uddin, please proceed to room 205."),
     ]
 
 
@@ -294,7 +295,7 @@ def test_bangla_generation_does_not_depend_on_prerecorded_prompts(monkeypatch, t
 
     assert captured == [
         ("bn_female", "রোগী রহিম উদ্দিন, অনুগ্রহ করে কক্ষ নম্বর দুই শূন্য পাঁচ-এ যান।"),
-        ("en_male", "Rahim Uddin, please proceed to Dr. Ayesha Khan, room 205.")
+        ("en_male", "Rahim Uddin, please proceed to room 205.")
     ]
 
 
@@ -1108,7 +1109,7 @@ def test_mri_details_are_not_exposed_on_waiting_room_display():
         assert service.display("WR-1").current.report is None
 
 
-def test_configured_designation_preserves_vip_without_assigning_room():
+def test_designation_does_not_select_vip_and_explicit_priority_is_preserved():
     created = client.post('/api/v1/lookups', json={
         'category': 'rank_relationship', 'value': 'brigadier_general', 'label': 'Brigadier General',
         'metadata_json': {'priority': 'vip'}, 'sort_order': 0,
@@ -1119,6 +1120,13 @@ def test_configured_designation_preserves_vip_without_assigning_room():
     payload = token_payload() | {'rank': 'brigadier_general', 'patient_source': 'opd', 'doctor_id': '',
                                  'room_number': '999', 'priority': 'normal'}
     response = client.post('/api/v1/tokens', json=payload)
+    assert response.status_code == 201, response.text
+    token = response.json()
+    assert token['priority'] == 'normal'
+    updated = client.patch(f"/api/v1/tokens/{token['id']}", json=payload)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['priority'] == 'normal'
+    response = client.post('/api/v1/tokens', json=payload | {'priority': 'vip'})
     assert response.status_code == 201, response.text
     token = response.json()
     assert token['priority'] == 'vip'
@@ -1491,7 +1499,7 @@ def test_radiographer_management_and_role_logins():
             rows = {row['id']: row for row in occupancy.json()}
             assert rows['dr-khan']['occupied'] is True
             assert rows['second-radio']['occupied'] is False
-            assert set(rows['dr-khan']) == {'id', 'name', 'room', 'occupied'}
+            assert set(rows['dr-khan']) == {'id', 'name', 'room', 'occupied', 'active_token_ids'}
         assert client.post('/api/v1/admin/doctors', json={**new_doctor, 'id': 'unauthorized'}).status_code == 403
         assert client.delete('/api/v1/admin/doctors/second-radio').status_code == 403
         assert client.put('/api/v1/registration-fields', json={'value': {'required': ['patient_name']}}).status_code == 403
@@ -1968,3 +1976,37 @@ def test_browser_diagnostics_are_bounded_authenticated_and_do_not_refresh_queue(
     client.cookies.clear()
     assert client.post('/api/v1/client-events', json=payload).status_code == 401
     client_log_limits.clear()
+
+
+def test_make_available_completes_active_patient_audits_and_rejects_stale_click():
+    from app.database import SessionLocal
+    from app.models import AuditEvent
+    first = client.post('/api/v1/tokens', json=token_payload()).json()
+    client.post(f"/api/v1/doctors/dr-khan/tokens/{first['id']}/call").raise_for_status()
+    person = client.get('/api/v1/radiographers/status').json()[0]
+    assert person['occupied'] is True
+    payload = {'active_token_ids': person['active_token_ids']}
+    response = client.post('/api/v1/doctors/dr-khan/make-available', json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()['completed'] == 1
+    assert client.get('/api/v1/radiographers/status').json()[0]['occupied'] is False
+    with SessionLocal() as db:
+        token = db.get(QueueToken, first['id'])
+        assert token.status == 'completed'
+        assert token.completed_at is not None
+        audit = db.scalar(select(AuditEvent).where(AuditEvent.action == 'queue.availability_reset'))
+        assert audit.actor == 'admin'
+        assert audit.previous_status == 'called'
+        assert audit.token_id == first['id']
+    assert client.post('/api/v1/doctors/dr-khan/make-available', json=payload).json()['completed'] == 0
+    second = client.post('/api/v1/tokens', json=token_payload('Second Patient')).json()
+    client.post(f"/api/v1/doctors/dr-khan/tokens/{second['id']}/call").raise_for_status()
+    assert client.post('/api/v1/doctors/dr-khan/make-available', json=payload).status_code == 409
+    with SessionLocal() as db:
+        assert db.get(QueueToken, second['id']).status == 'called'
+        db.add(User(username='restricted-radio', full_name='Restricted', password_hash=hash_password('Password123!'), role='radiographer', doctor_id=None, is_active=True))
+        db.commit()
+    client.cookies.clear()
+    assert client.post('/api/v1/doctors/dr-khan/make-available', json=payload).status_code == 401
+    client.post('/api/v1/auth/login', json={'username': 'restricted-radio', 'password': 'Password123!'}).raise_for_status()
+    assert client.post('/api/v1/doctors/dr-khan/make-available', json={'active_token_ids': [second['id']]}).status_code == 403

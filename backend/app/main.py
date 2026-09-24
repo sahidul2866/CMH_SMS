@@ -127,6 +127,7 @@ from .schemas import (
     WaitingRoomCreate,
 )
 from .service import QueueService
+from .schemas import MakeAvailableRequest
 from .observability import configure_logging, install_audit_logging, log_event, request_id_context
 
 
@@ -890,7 +891,42 @@ def radiographer_status(user: User = Depends(require_permission("queue.view")), 
     doctors = db.scalars(select(Doctor).where(Doctor.is_active.is_(True)).order_by(Doctor.name)).all()
     active = db.scalars(select(QueueToken).where(QueueToken.status.in_(["called", "recalled", "in_progress"]))).all()
     return [{"id": doctor.id, "name": doctor.name, "room": doctor.room_number,
-             "occupied": any(token.doctor_id == doctor.id for token in active)} for doctor in doctors]
+             "occupied": any(token.doctor_id == doctor.id for token in active),
+             "active_token_ids": [token.id for token in active if token.doctor_id == doctor.id]} for doctor in doctors]
+
+
+@app.post("/api/v1/doctors/{doctor_id}/make-available")
+async def make_radiographer_available(doctor_id: str, payload: MakeAvailableRequest,
+                                     user: User = Depends(require_permission("queue.action")),
+                                     db: Session = Depends(get_db)):
+    enforce_doctor_access(user, doctor_id, db)
+    doctor = db.scalar(select(Doctor).where(Doctor.id == doctor_id).with_for_update())
+    if not doctor or not doctor.is_active:
+        raise HTTPException(404, "Radiographer not found")
+    active = db.scalars(select(QueueToken).where(
+        QueueToken.doctor_id == doctor_id,
+        QueueToken.status.in_(["called", "recalled", "in_progress"])
+    ).with_for_update().execution_options(populate_existing=True)).all()
+    if not active:
+        return {"completed": 0}
+    if {token.id for token in active} != set(payload.active_token_ids):
+        raise HTTPException(409, "The active patient has changed. Refresh availability and try again.")
+    rooms = {token.waiting_room for token in active}
+    now = datetime.utcnow()
+    for token in active:
+        previous = token.status
+        token.status = "completed"
+        token.completed_at = now
+        db.add(AuditEvent(action="queue.availability_reset", actor=user.username, token_id=token.id,
+                          previous_status=previous, new_status="completed",
+                          reason="Staff used Make available to finish an active patient",
+                          detail={"doctor_id": doctor_id}))
+    db.commit()
+    service = QueueService(db)
+    for room in rooms:
+        await waiting_room_hub.broadcast(room, "queue.updated", "radiographer.available",
+                                         display=service.display(room).model_dump(mode="json"))
+    return {"completed": len(active)}
 
 
 @app.patch("/api/v1/tokens/{token_id}", response_model=TokenRead)
@@ -905,9 +941,7 @@ def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depen
     service = QueueService(db)
     for category, value in [("service_category", payload.service_category), ("priority_category", payload.priority), ("rank_relationship", payload.rank), ("patient_source", payload.patient_source)]:
         if value:
-            option = service._require_lookup(category, value)
-            if category == "rank_relationship" and ((option.metadata_json or {}).get("priority") == "vip" or value.lower() == "vip"):
-                payload.priority = "vip"
+            service._require_lookup(category, value)
     from .monthly_report import classify
     fields = {"custom_fields", "patient_name_bn", "patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "beneficiary_type", "service_status", "entitlement", "sponsor_rank", "family_relationship"}
     changes = {key: value for key, value in payload.model_dump().items() if key in fields}

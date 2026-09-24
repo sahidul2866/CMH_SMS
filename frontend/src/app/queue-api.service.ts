@@ -59,7 +59,10 @@ export class QueueApiService {
   }
 
   updateWaitingPatient(id: string, payload: Record<string, unknown>) { return this.http.patch<QueueToken>(`${this.baseUrl}/tokens/${id}`, payload); }
-  radiographerStatus() { return this.http.get<{id: string; name: string; room: string; occupied: boolean}[]>(`${this.baseUrl}/radiographers/status`); }
+  makeAvailable(doctorId: string, activeTokenIds: string[]) {
+    return this.http.post<{completed: number}>(`${this.baseUrl}/doctors/${doctorId}/make-available`, {active_token_ids: activeTokenIds});
+  }
+  radiographerStatus() { return this.http.get<{id: string; name: string; room: string; occupied: boolean; active_token_ids: string[]}[]>(`${this.baseUrl}/radiographers/status`); }
   createDoctor(payload: Record<string, unknown>) { return this.http.post(`${this.baseUrl}/admin/doctors`, payload); }
   removeDoctor(id: string) { return this.http.delete<void>(`${this.baseUrl}/admin/doctors/${id}`); }
   assignmentDoctors() {

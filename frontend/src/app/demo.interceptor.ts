@@ -54,6 +54,22 @@ export const demoInterceptor: HttpInterceptorFn = (request, next) => {
     const item = lookupValues.find(item => item.id === lookupMatch[1])!;
     Object.assign(item, request.body); return json(item);
   }
+  if (path === '/radiographers/status' && request.method === 'GET') {
+    return json(doctors.map(doctor => {
+      const active = tokens.filter(token => token.doctor_id === doctor.id && ['called', 'recalled', 'in_progress'].includes(token.status));
+      return {id: doctor.id, name: doctor.name, room: doctor.room, occupied: !!active.length, active_token_ids: active.map(token => token.id)};
+    }));
+  }
+  const availableMatch = path.match(/^\/doctors\/([^/]+)\/make-available$/);
+  if (availableMatch && request.method === 'POST') {
+    const active = tokens.filter(token => token.doctor_id === availableMatch[1] && ['called', 'recalled', 'in_progress'].includes(token.status));
+    const expected = (request.body as {active_token_ids: string[]}).active_token_ids;
+    if (active.length && (active.length !== expected.length || active.some(token => !expected.includes(token.id)))) {
+      return throwError(() => new HttpErrorResponse({status: 409, error: {detail: 'The active patient has changed. Refresh and try again.'}}));
+    }
+    active.forEach(token => {token.status = 'completed';});
+    return json({completed: active.length});
+  }
   if (path === '/dashboard' && request.method === 'GET') return json(dashboard());
   if (path === '/tokens' && request.method === 'GET') {
     const doctorId = request.params.get('doctor_id');
@@ -61,7 +77,6 @@ export const demoInterceptor: HttpInterceptorFn = (request, next) => {
   }
   if (path === '/tokens' && request.method === 'POST') {
     const body = request.body as Record<string, string>;
-    if (['vip', 'brigadier_general'].includes(body['rank'])) body['priority'] = 'vip';
     const token: QueueToken = { ...(body as unknown as QueueToken), id: `demo-${Date.now()}`, doctor_id: null, doctor_name: '', department: '', room_number: '', waiting_room: '', token_number: `RD-${String(tokens.length + 1).padStart(3, '0')}`, serial_number: `${String(tokens.length + 1).padStart(5, '0')}/${String(new Date().getFullYear()).slice(-2)}`, status: 'waiting', waiting_minutes: 0, created_at: new Date().toISOString(), recall_count: 0 };
     const doctor = doctors.find(item => item.id === body['doctor_id']);
     if (doctor) Object.assign(token, {doctor_id: doctor.id, doctor_name: doctor.name, department: doctor.department, room_number: doctor.room, waiting_room: doctor.waitingRoom});
