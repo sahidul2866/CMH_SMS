@@ -139,6 +139,35 @@ class PostgresLauncherTests(unittest.TestCase):
                 self.assertEqual(pg.main(), 0)
                 self.assertTrue(launch.call_args.kwargs['env']['CMH_SMS_DATABASE_URL'].endswith('/' + database))
 
+    def test_resumed_setup_does_not_prompt_when_saved_database_is_ready(self):
+        pg.save_config({'url': 'postgresql://cmh_sms:saved@localhost/cmh_sms',
+                        'managed_local': True, 'provisioned': False})
+        with patch.object(pg.subprocess, 'run'), patch.object(pg, 'connect'), patch.object(pg, 'provision') as provision:
+            pg.setup()
+            provision.assert_not_called()
+        self.assertTrue(pg.load_config()['provisioned'])
+        self.assertIn(':saved@', pg.load_config()['url'])
+
+    def test_wrong_admin_password_is_identified_without_leaking_it(self):
+        with patch.object(pg.getpass, 'getpass', return_value='hidden-password'), \
+                patch.object(pg.psycopg, 'connect', side_effect=pg.psycopg.errors.InvalidPassword('hidden-password')):
+            with self.assertRaisesRegex(ValueError, 'administrator password') as error:
+                pg.provision({'url': 'postgresql://cmh_sms:saved@localhost/cmh_sms'})
+        self.assertNotIn('hidden-password', str(error.exception))
+
+    def test_existing_app_password_mismatch_is_not_reported_as_admin_failure(self):
+        admin = MagicMock()
+        admin.execute.return_value.fetchone.return_value = (1,)
+        with patch.object(pg.getpass, 'getpass', return_value='hidden-admin'), \
+                patch.object(pg.psycopg, 'connect') as connection, \
+                patch.object(pg, 'connect', side_effect=pg.psycopg.errors.InvalidPassword('hidden-app')):
+            connection.return_value.__enter__.return_value = admin
+            with self.assertRaisesRegex(ValueError, 'Administrator login succeeded') as error:
+                pg.provision({'url': 'postgresql://cmh_sms:saved@localhost/cmh_sms'})
+        self.assertNotIn('hidden-app', str(error.exception))
+        self.assertEqual(admin.execute.call_count, 1)
+        self.assertTrue(admin.execute.call_args.args[0].startswith('SELECT'))
+
 
 if __name__ == '__main__':
     unittest.main()

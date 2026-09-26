@@ -61,9 +61,17 @@ def load_config() -> dict:
 def provision(config: dict) -> None:
     print('Enter the PostgreSQL postgres administrator password chosen during installation.')
     admin_password = getpass.getpass('PostgreSQL administrator password: ')
-    with psycopg.connect(host='127.0.0.1', port=5432, dbname='postgres',
-                        user='postgres', password=admin_password,
-                        connect_timeout=10, autocommit=True) as admin:
+    try:
+        administrator = psycopg.connect(host='127.0.0.1', port=5432, dbname='postgres',
+                                       user='postgres', password=admin_password,
+                                       connect_timeout=10, autocommit=True)
+    except psycopg.errors.InvalidPassword:
+        raise ValueError('PostgreSQL rejected the postgres administrator password on 127.0.0.1:5432. '
+                         'CMH setup has not changed it. Check that this is the intended PostgreSQL instance.') from None
+    except psycopg.Error:
+        raise ValueError('Could not connect as postgres on 127.0.0.1:5432. '
+                         'Check the PostgreSQL service, port and local authentication rules.') from None
+    with administrator as admin:
         exists = admin.execute('SELECT 1 FROM pg_roles WHERE rolname = %s', ('cmh_sms',)).fetchone()
         if not exists:
             password = make_url(config['url']).password
@@ -71,8 +79,14 @@ def provision(config: dict) -> None:
                           .format(sql.Identifier('cmh_sms'), sql.Literal(password)))
         # Never reset the password of a pre-existing role.
         probe = make_url(config['url']).set(database='postgres').render_as_string(hide_password=False)
-        with connect(probe) as app:
-            app.execute('SELECT 1')
+        try:
+            with connect(probe) as app:
+                app.execute('SELECT 1')
+        except psycopg.errors.InvalidPassword:
+            raise ValueError('Administrator login succeeded, but the saved cmh_sms application password was rejected. '
+                             'Restore .setup/postgres.json from the original installation, or configure '
+                             'CMH_SMS_DATABASE_URL with the existing application credentials. '
+                             'Do not delete the database or reset the postgres administrator password for this error.') from None
         exists = admin.execute('SELECT 1 FROM pg_database WHERE datname = %s', ('cmh_sms',)).fetchone()
         if not exists:
             admin.execute(sql.SQL('CREATE DATABASE {} OWNER {}').format(
@@ -81,6 +95,7 @@ def provision(config: dict) -> None:
 
 def setup() -> None:
     config = load_config()
+    resuming = bool(config)
     supplied = os.getenv('CMH_SMS_DATABASE_URL')
     if supplied:
         candidate = {'url': validate_url(supplied), 'managed_local': False}
@@ -104,7 +119,16 @@ def setup() -> None:
         subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
                         '-File', str(ROOT / 'scripts' / 'ensure_postgres_windows.ps1')], check=True)
         if not config.get('provisioned'):
-            provision(config)
+            ready = False
+            if resuming:
+                try:
+                    with connect(config['url']) as conn:
+                        conn.execute('SELECT 1')
+                    ready = True
+                except psycopg.Error:
+                    pass
+            if not ready:
+                provision(config)
     with connect(config['url']) as conn:
         conn.execute('SELECT 1')
     config['provisioned'] = True
@@ -146,6 +170,11 @@ def main() -> int:
             print(f'ERROR: {exc}', file=sys.stderr)
         else:
             print('ERROR: Invalid PostgreSQL configuration.', file=sys.stderr)
+        return 1
+    except psycopg.errors.InvalidPassword:
+        print('ERROR: The saved application database credentials were rejected. '
+              'The postgres administrator password was not changed. Restore the original .setup/postgres.json '
+              'or set CMH_SMS_DATABASE_URL to valid existing credentials.', file=sys.stderr)
         return 1
     except (psycopg.Error, subprocess.CalledProcessError, OSError):
         print('ERROR: PostgreSQL setup/connection failed. Check the service, credentials and database access. '
