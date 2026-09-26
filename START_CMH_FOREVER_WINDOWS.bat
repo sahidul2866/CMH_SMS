@@ -14,7 +14,7 @@ if not exist "%PROJECT_DIR%frontend\dist\cmh-smart-serial\browser\index.html" if
 
 call "%WINDOWS_ENV%"
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ip=(Get-NetIPAddress -AddressFamily IPv4 ^| Where-Object {$_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown'} ^| Sort-Object InterfaceMetric ^| Select-Object -First 1 -ExpandProperty IPAddress); if($ip){$ip}else{''}"`) do set "LAN_IP=%%I"
-set "CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1"
+set "CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1,10.0.0.0/8"
 if defined LAN_IP set "CMH_SMS_ALLOWED_HOSTS=!CMH_SMS_ALLOWED_HOSTS!,!LAN_IP!"
 
 :run

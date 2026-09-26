@@ -2009,3 +2009,24 @@ def test_make_available_completes_active_patient_audits_and_rejects_stale_click(
     assert client.post('/api/v1/doctors/dr-khan/make-available', json=payload).status_code == 401
     client.post('/api/v1/auth/login', json={'username': 'restricted-radio', 'password': 'Password123!'}).raise_for_status()
     assert client.post('/api/v1/doctors/dr-khan/make-available', json={'active_token_ids': [second['id']]}).status_code == 403
+
+
+def test_patient_form_appearance_defaults_persists_and_validates():
+    from app.database import SessionLocal
+    defaults = client.get('/api/v1/registration-fields').json()['appearance']
+    assert defaults == {'layout': 'modal', 'font_size': 14}
+    settings = client.get('/api/v1/settings').json()
+    assert next(row['value'] for row in settings if row['key'] == 'patient_form') == defaults
+    response = client.put('/api/v1/settings/patient_form', json={'value': {'layout': 'fullscreen', 'font_size': 22}})
+    assert response.status_code == 200, response.text
+    assert client.get('/api/v1/registration-fields').json()['appearance'] == {'layout': 'fullscreen', 'font_size': 22}
+    for value in [{'font_size': 25}, {'font_size': 11}, {'font_size': True}, {'font_size': 14.5}, {'layout': 'invalid'}]:
+        assert client.put('/api/v1/settings/patient_form', json={'value': value}).status_code == 422
+    assert client.get('/api/v1/registration-fields').json()['appearance']['font_size'] == 22
+    with SessionLocal() as db:
+        db.add(User(username='appearance-desk', full_name='Desk', password_hash=hash_password('Password123!'), role='reception', is_active=True))
+        db.commit()
+    client.cookies.clear()
+    client.post('/api/v1/auth/login', json={'username': 'appearance-desk', 'password': 'Password123!'}).raise_for_status()
+    assert client.get('/api/v1/registration-fields').json()['appearance']['font_size'] == 22
+    assert client.put('/api/v1/settings/patient_form', json={'value': defaults}).status_code == 403

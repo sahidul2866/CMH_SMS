@@ -100,7 +100,7 @@ def mutation_topics(method: str, path: str, status_code: int) -> list[str]:
         return ['directory', 'queue']
     if route == 'lookups' or route.startswith('lookups/'):
         return ['lookups', 'queue']
-    if route == 'registration-fields':
+    if route in {'registration-fields', 'settings/patient_form'}:
         return ['registration']
     if route in {'settings/display', 'settings/queue'}:
         return ['queue']

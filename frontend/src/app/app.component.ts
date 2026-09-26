@@ -257,10 +257,10 @@ export class AppComponent implements OnDestroy {
     return code ? 'Report meaning: ' + (this.reportCodes[option.category]?.find(item => item.value === code)?.label || code) : '';
   }
   settingDescription(key: string): string {
-    return ({announcement: 'Voice, volume and announcement playback', display: 'Patient privacy and waiting-room screen', queue: 'Patient order, recalls and arrival grace period'} as Record<string, string>)[key] || 'Manage preferences';
+    return ({patient_form: 'Add patient form text size and modal layout', announcement: 'Voice, volume and announcement playback', display: 'Patient privacy and waiting-room screen', queue: 'Patient order, recalls and arrival grace period'} as Record<string, string>)[key] || 'Manage preferences';
   }
   settingIcon(key: string): string {
-    return ({announcement: 'M11 4 5 9H2v6h3l6 5V4zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14', display: 'M3 4h18v13H3V4zm5 17h8m-4-4v4', queue: 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1'} as Record<string, string>)[key] || '';
+    return ({patient_form: 'M4 4h16v16H4V4zm4 4h8m-8 4h8m-8 4h5', announcement: 'M11 4 5 9H2v6h3l6 5V4zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14', display: 'M3 4h18v13H3V4zm5 17h8m-4-4v4', queue: 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1'} as Record<string, string>)[key] || '';
   }
   get requiredFieldCount(): number { return Object.values(this.requiredDraft).filter(Boolean).length + this.customDraft.filter(field => field.enabled && field.required).length; }
   get requiredFieldsChanged(): boolean {
@@ -283,6 +283,7 @@ export class AppComponent implements OnDestroy {
   }
   requiredFields = ['patient_name'];
   enabledFields: string[] = [];
+  patientFormAppearance = {layout: 'modal', font_size: 14};
   registrationFieldsLoaded = false;
   registrationFields: Record<string, string> = {};
   requiredDraft: Record<string, boolean> = {};
@@ -294,6 +295,7 @@ export class AppComponent implements OnDestroy {
   newCustomType: CustomRegistrationField['type'] = 'text';
   newCustomOptions = '';
   private applyRegistrationFields(data: RegistrationFields): void {
+    this.patientFormAppearance = data.appearance ?? {layout: 'modal', font_size: 14};
     this.requiredFields = data.required; this.enabledFields = data.enabled ?? Object.keys(data.fields);
     this.registrationFields = data.fields; this.customFields = data.custom ?? [];
     this.customDraft = JSON.parse(JSON.stringify(this.customFields));

@@ -6,6 +6,8 @@ import re
 from fastapi import HTTPException
 from .models import AppSetting
 
+FORM_DEFAULTS = {'layout': 'modal', 'font_size': 14}
+
 FIELDS = {
     'patient_name': 'Name', 'patient_phone': 'Contact number', 'patient_source': 'Patient source',
     'service_number': 'Service No./BA', 'age': 'Age', 'unit': 'Unit',
@@ -19,7 +21,8 @@ FIELDS = {
 def requirements(db):
     setting = db.get(AppSetting, 'registration_fields')
     value = setting.value if setting else {}
-    return {'fields': FIELDS, 'required': value.get('required', ['patient_name', 'family_relationship', 'sponsor_rank']),
+    form_setting = db.get(AppSetting, 'patient_form')
+    return {'appearance': {**FORM_DEFAULTS, **(form_setting.value if form_setting else {})}, 'fields': FIELDS, 'required': value.get('required', ['patient_name', 'family_relationship', 'sponsor_rank']),
             'enabled': value.get('enabled', list(FIELDS)), 'custom': value.get('custom', [])}
 
 

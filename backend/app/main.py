@@ -390,6 +390,7 @@ def validated_setting(key: str, value: dict) -> dict:
         # Ignore obsolete caps from existing databases and older clients.
         value = {name: item for name, item in value.items() if name != "recall_limit"}
     allowed = {
+        "patient_form": {"layout", "font_size"},
         "display": {"privacy_mode", "next_token_count", "ticker_message"},
         "queue": {"ordering_policy", "late_grace_minutes"},
         "announcement": {"enabled", "language_order", "repeat_count", "rate", "volume", "voice_mode", "cache_max_files"},
@@ -410,7 +411,11 @@ def validated_setting(key: str, value: dict) -> dict:
         if isinstance(item, bool) or not isinstance(item, (int, float)) or not minimum <= item <= maximum:
             raise HTTPException(422, f"{name} must be a number from {minimum} to {maximum}")
 
-    if key == "display":
+    if key == "patient_form":
+        if value.get("layout") not in {"modal", "fullscreen"}:
+            raise HTTPException(422, "layout must be modal or fullscreen")
+        integer("font_size", 12, 24)
+    elif key == "display":
         if value.get("privacy_mode") not in {"initials", "token_only", "full"}:
             raise HTTPException(422, "privacy_mode is invalid")
         integer("next_token_count", 1, 10)
@@ -1567,7 +1572,11 @@ def save_registration_fields(payload: SettingUpdate, user: User = Depends(requir
 
 @app.get("/api/v1/settings")
 def settings(_: User = Depends(require_permission("settings.manage")), db: Session = Depends(get_db)):
-    return list(db.scalars(select(AppSetting).where(AppSetting.key.in_(["display", "queue", "announcement", "registration_fields"])).order_by(AppSetting.key)))
+    from .registration import FORM_DEFAULTS
+    rows = list(db.scalars(select(AppSetting).where(AppSetting.key.in_(["display", "queue", "announcement", "registration_fields", "patient_form"])).order_by(AppSetting.key)))
+    if not any(row.key == 'patient_form' for row in rows):
+        rows.append({'key': 'patient_form', 'value': FORM_DEFAULTS, 'description': 'Add patient form appearance'})
+    return rows
 
 
 @app.put("/api/v1/settings/{key}")
@@ -1577,6 +1586,10 @@ async def update_setting(
     if key in {"registration_fields", "mri_summary_mapping"}:
         raise HTTPException(422, "Use the dedicated settings endpoint")
     setting = db.get(AppSetting, key)
+    if not setting and key == 'patient_form':
+        from .registration import FORM_DEFAULTS
+        setting = AppSetting(key=key, value=dict(FORM_DEFAULTS), description='Add patient form appearance')
+        db.add(setting)
     if not setting:
         raise HTTPException(404, "Setting not found")
     setting.value = validated_setting(key, {**setting.value, **payload.value})

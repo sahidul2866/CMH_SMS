@@ -178,6 +178,7 @@ export interface CustomRegistrationField {
   enabled: boolean; required: boolean; options: string[];
 }
 export interface RegistrationFields {
+  appearance?: {layout: 'modal' | 'fullscreen'; font_size: number};
   fields: Record<string, string>; required: string[]; enabled: string[]; custom: CustomRegistrationField[];
 }
 
