@@ -164,7 +164,7 @@ def test_reception_report_filters_and_exports_complete_excel_table():
     assert sheet.auto_filter.ref == sheet.dimensions
     assert sheet.freeze_panes == "F2"
     assert sheet["E2"].value == "Priority Patient"
-    assert sheet.max_column == 37
+    assert sheet.max_column == 36
     assert sheet.max_row == 2
 
     pdf = client.get("/api/v1/reports/reception.pdf", params=params)
@@ -1368,7 +1368,7 @@ def test_monthly_summary_classification_snapshot_exports_and_correction():
         ('family', 'retired', 'military', 'or', None),
     ]
     for person, status, entitlement, rank, expected in matrix:
-        payload = {**token_payload(), 'doctor_id': None, 'waiting_room': '', 'rank': rank if person == 'self' else '', 'beneficiary_type': person, 'service_status': status, 'entitlement': entitlement, 'sponsor_rank': rank if person == 'family' else '', 'family_relationship': 'spouse' if person == 'family' else ''}
+        payload = {**token_payload(), 'doctor_id': None, 'waiting_room': '', 'rank': rank, 'beneficiary_type': person, 'service_status': status, 'entitlement': entitlement, 'family_relationship': 'spouse' if person == 'family' else ''}
         response = client.post('/api/v1/tokens', json=payload)
         assert response.status_code == 201, response.text
         token = response.json()
@@ -1390,7 +1390,7 @@ def test_monthly_summary_classification_snapshot_exports_and_correction():
         rank.metadata_json = {'report_group': 'or'}
         db.commit()
     assert client.get('/api/v1/reports/mri-summary', params=query).json() == data
-    correction = client.patch(f"/api/v1/tokens/{legacy['id']}/classification", json={'beneficiary_type': 'family', 'entitlement': 'military', 'service_status': 'serving', 'sponsor_rank': 'jco', 'family_relationship': 'child', 'rank': ''})
+    correction = client.patch(f"/api/v1/tokens/{legacy['id']}/classification", json={'beneficiary_type': 'family', 'entitlement': 'military', 'service_status': 'serving', 'rank': 'jco', 'family_relationship': 'child'})
     assert correction.status_code == 200, correction.text
     assert correction.json()['summary_category'] == 'family_jco_or_nce'
     with SessionLocal() as db:
@@ -1426,7 +1426,7 @@ def test_summary_completion_dates_use_dhaka_and_invalid_inputs():
     assert report['rows'][0]['total'] == 1 and report['rows'][-1]['total'] == 1
     assert client.get('/api/v1/reports/mri-summary', params={'month': '2026-13'}).status_code == 422
     assert client.get('/api/v1/reports/mri-summary', params={'month': '2026-06', 'basis': 'anything'}).status_code == 422
-    invalid = client.post('/api/v1/tokens', json={**token_payload(), 'rank': '', 'beneficiary_type': 'family', 'entitlement': 'military', 'family_relationship': 'spouse'})
+    invalid = client.post('/api/v1/tokens', json={**token_payload(), 'rank': 'not-a-rank', 'beneficiary_type': 'family', 'entitlement': 'military', 'family_relationship': 'spouse'})
     assert invalid.status_code == 422
 
 
@@ -1527,8 +1527,8 @@ def test_configurable_summary_mapping_preserves_snapshots_and_validates_changes(
     from app.database import SessionLocal
     from app.models import AuditEvent
     install_summary_lookups()
-    payload = {**token_payload(), 'rank': '', 'beneficiary_type': 'family', 'entitlement': 'military',
-               'service_status': 'retired', 'sponsor_rank': 'jco', 'family_relationship': 'spouse'}
+    payload = {**token_payload(), 'rank': 'jco', 'beneficiary_type': 'family', 'entitlement': 'military',
+               'service_status': 'retired', 'family_relationship': 'spouse'}
     old = client.post('/api/v1/tokens', json=payload).json()
     assert old['summary_category'] is None
     response = client.get('/api/v1/mri-summary-mapping')
@@ -1544,7 +1544,7 @@ def test_configurable_summary_mapping_preserves_snapshots_and_validates_changes(
     with SessionLocal() as db:
         assert db.get(QueueToken, old['id']).summary_category is None
         assert db.scalar(select(AuditEvent).where(AuditEvent.action == 'mri_summary.mapping_updated'))
-    correction = client.patch(f"/api/v1/tokens/{old['id']}/classification", json={key: payload.get(key, '') for key in ['beneficiary_type', 'entitlement', 'service_status', 'sponsor_rank', 'family_relationship', 'rank']})
+    correction = client.patch(f"/api/v1/tokens/{old['id']}/classification", json={key: payload.get(key, '') for key in ['beneficiary_type', 'entitlement', 'service_status', 'family_relationship', 'rank']})
     assert correction.status_code == 200
     assert correction.json()['summary_category'] == 'family_jco_or_nce'
     for invalid, status in [({}, 409), ({**mappings, 're': 'invalid'}, 422), ({**mappings, 'unknown': 're'}, 409)]:
@@ -2030,3 +2030,58 @@ def test_patient_form_appearance_defaults_persists_and_validates():
     client.post('/api/v1/auth/login', json={'username': 'appearance-desk', 'password': 'Password123!'}).raise_for_status()
     assert client.get('/api/v1/registration-fields').json()['appearance']['font_size'] == 22
     assert client.put('/api/v1/settings/patient_form', json={'value': defaults}).status_code == 403
+
+
+def test_ward_text_is_saved_editable_and_cleared_for_non_ward_sources():
+    client.post('/api/v1/lookups', json={'category': 'patient_source', 'value': 'ipd', 'label': 'IPD / Ward'}).raise_for_status()
+    client.post('/api/v1/lookups', json={'category': 'patient_source', 'value': 'opd', 'label': 'OPD'}).raise_for_status()
+    payload = token_payload() | {'patient_source': 'ipd', 'ward_text': '  Surgical Ward 7  '}
+    result = client.post('/api/v1/tokens', json=payload)
+    assert result.status_code == 201, result.text
+    token = result.json()
+    assert token['ward_text'] == 'Surgical Ward 7'
+    edited = client.patch(f"/api/v1/tokens/{token['id']}", json=payload | {'ward_text': 'Ward 12'})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()['ward_text'] == 'Ward 12'
+    display = client.get('/api/v1/displays/WR-1').json()
+    assert display['next_tokens'][0]['ward_text'] is None
+    cleared = client.patch(f"/api/v1/tokens/{token['id']}", json=payload | {'patient_source': 'opd'})
+    assert cleared.json()['ward_text'] is None
+    assert client.post('/api/v1/tokens', json=payload | {'ward_text': 'x' * 241}).status_code == 422
+
+
+def test_service_search_keeps_sponsor_and_family_members_and_historical_entries():
+    from app.database import SessionLocal
+    install_summary_lookups()
+    base = token_payload() | {'service_number': 'BA-Shared', 'rank': 'officer', 'beneficiary_type': 'self', 'entitlement': 'military', 'service_status': 'serving'}
+    owner = client.post('/api/v1/tokens', json=base | {'patient_name': 'Sponsor Name'})
+    assert owner.status_code == 201, owner.text
+    child = client.post('/api/v1/tokens', json=base | {'patient_name': 'Child Name', 'beneficiary_type': 'family', 'rank': 'officer', 'family_relationship': 'child'})
+    assert child.status_code == 201, child.text
+    with SessionLocal() as db:
+        row = db.get(QueueToken, owner.json()['id'])
+        row.token_date = date.today() - timedelta(days=30)
+        row.status = 'completed'
+        db.commit()
+    result = client.get('/api/v1/registration/service-number-suggestions', params={'q': 'ba-shared'}).json()
+    assert {row['patient_name'] for row in result['items']} == {'Sponsor Name', 'Child Name'}
+    assert next(row for row in result['items'] if row['patient_name'] == 'Child Name')['rank'] == 'officer'
+    assert all('report' not in row and 'priority' not in row and 'doctor_id' not in row for row in result['items'])
+    assert client.get('/api/v1/registration/service-number-suggestions', params={'q': 'BA%'}).json()['items'] == []
+    client.cookies.clear()
+    assert client.get('/api/v1/registration/service-number-suggestions', params={'q': 'BA'}).status_code == 401
+
+
+def test_service_search_pagination_does_not_hide_additional_patients():
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        for index in range(53):
+            db.add(QueueToken(token_number=f'S-{index}', patient_name=f'Person {index}', patient_phone='',
+                              service_number='SAME-123', token_date=date.today(), sequence=index + 1,
+                              doctor_name='', department='', room_number='', waiting_room=''))
+        db.commit()
+    first = client.get('/api/v1/registration/service-number-suggestions', params={'q': 'SAME'}).json()
+    second = client.get('/api/v1/registration/service-number-suggestions', params={'q': 'SAME', 'offset': 50}).json()
+    assert len(first['items']) == 50 and first['has_more'] is True
+    assert len(second['items']) == 3 and second['has_more'] is False
+    assert len({row['id'] for row in first['items'] + second['items']}) == 53

@@ -325,3 +325,16 @@ For access through a server address in the `10.*` LAN range, use
 `CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1,192.168.0.103,10.0.0.0/8`.
 CIDR entries validate the requested server host for HTTP and WebSocket traffic;
 they do not filter client IP addresses. Restart the server after changing this setting.
+
+Patient registration supports optional ward details when the source is Ward/IPD.
+These details are retained in patient records and reception exports, and are hidden
+from waiting-room displays. Changing the source to a non-ward source clears them.
+
+Typing at least two characters in Service number searches previous registrations,
+including historical visits and all family members sharing a sponsor number. Search
+results include names, relationships and visit dates, with pagination for additional
+matches. Selecting a result fills identity, contact, age, unit and classification
+fields for review; it does not copy visit-specific MRI details, priority or room
+assignments. For a family patient, the Rank control directly after Service number
+stores the sponsor’s rank in the same `rank` field used for self patients. Apply migration `20260926_0026` using the normal launcher
+before running this version.

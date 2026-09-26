@@ -936,6 +936,23 @@ async def make_radiographer_available(doctor_id: str, payload: MakeAvailableRequ
     return {"completed": len(active)}
 
 
+@app.get("/api/v1/registration/service-number-suggestions")
+def service_number_suggestions(q: str = Query(min_length=2, max_length=40), offset: int = Query(default=0, ge=0),
+                               _user: User = Depends(require_permission("queue.serial.create")), db: Session = Depends(get_db)):
+    query = q.strip()
+    if len(query) < 2:
+        return {"items": [], "has_more": False}
+    # A service number identifies a sponsor, not a unique patient. Keep every
+    # matching registration and paginate rather than hiding family members.
+    fields = ['id', 'service_number', 'patient_name', 'patient_name_bn', 'patient_phone', 'service_category',
+              'rank', 'unit', 'age', 'beneficiary_type', 'entitlement', 'service_status',
+              'family_relationship', 'created_at']
+    rows = db.execute(select(*(getattr(QueueToken, field) for field in fields)).where(
+        func.lower(QueueToken.service_number).startswith(query.lower(), autoescape=True)
+    ).order_by(QueueToken.created_at.desc(), QueueToken.id).offset(offset).limit(51)).mappings().all()
+    return {"items": [dict(row) for row in rows[:50]], "has_more": len(rows) > 50}
+
+
 @app.patch("/api/v1/tokens/{token_id}", response_model=TokenRead)
 def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depends(require_permission("queue.serial.create")), db: Session = Depends(get_db)):
     token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
@@ -950,7 +967,7 @@ def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depen
         if value:
             service._require_lookup(category, value)
     from .monthly_report import classify
-    fields = {"custom_fields", "patient_name_bn", "patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "beneficiary_type", "service_status", "entitlement", "sponsor_rank", "family_relationship"}
+    fields = {"custom_fields", "patient_name_bn", "patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "ward_text", "beneficiary_type", "service_status", "entitlement", "family_relationship"}
     changes = {key: value for key, value in payload.model_dump().items() if key in fields}
     if "patient_name_bn" not in payload.model_fields_set:
         if payload.patient_name != token.patient_name:
@@ -1726,7 +1743,7 @@ def reception_report_excel(
         "MRI Area", "Contrast", "Film", "Report", "Patient Source", "Priority", "Room", "Radiographer", "Status",
         "Created At", "Called At", "Service Started At", "Completed At", "Cancelled At", "Skipped At",
         "Recalled At", "No Show At", "Scheduled At", "Recall Count", "Mobile Number", "Service Category",
-        "Department", "Waiting Room", "Registration Type", "Patient Type", "Entitlement", "Service Status", "Sponsor Rank", "Family Relationship", "Summary Category",
+        "Department", "Waiting Room", "Registration Type", "Patient Type", "Entitlement", "Service Status", "Family Relationship", "Summary Category",
     ]
     from .registration import requirements
     custom = requirements(db)['custom']
@@ -1741,17 +1758,17 @@ def reception_report_excel(
         sheet.append([
             token.serial_number or token.token_number, token.token_date, token.service_number or "",
             label("rank_relationship", token.rank), token.patient_name, token.age, token.unit or "",
-            token.mri_area or "", token.contrast, token.film, token.report or "", label("patient_source", token.patient_source),
+            token.mri_area or "", token.contrast, token.film, token.report or "", " · ".join(filter(None, [label("patient_source", token.patient_source), token.ward_text])),
             label("priority_category", token.priority), token.room_number, token.doctor_name, token.status,
             token.created_at, token.called_at, token.started_at, token.completed_at, token.cancelled_at,
             token.skipped_at, token.recalled_at, token.no_show_at, token.scheduled_at, token.recall_count,
             token.patient_phone, token.service_category, token.department, token.waiting_room, token.source,
             label("beneficiary_type", token.beneficiary_type), label("entitlement", token.entitlement), label("service_status", token.service_status),
-            label("rank_relationship", token.sponsor_rank), label("family_relationship", token.family_relationship), token.summary_category or "Needs review",
+            label("family_relationship", token.family_relationship), token.summary_category or "Needs review",
         ] + [(token.custom_fields or {}).get(field['key'], '') for field in custom])
     sheet.freeze_panes = "F2"
     sheet.auto_filter.ref = sheet.dimensions
-    widths = [16, 13, 20, 25, 28, 8, 22, 28, 10, 8, 45, 22, 16, 12, 28, 16] + [20] * 9 + [12, 20, 20, 20, 16, 18] + [22] * 6 + [24] * len(custom)
+    widths = [16, 13, 20, 25, 28, 8, 22, 28, 10, 8, 45, 22, 16, 12, 28, 16] + [20] * 9 + [12, 20, 20, 20, 16, 18] + [22] * 5 + [24] * len(custom)
     for column, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(column)].width = width
     for row in sheet.iter_rows(min_row=2):
@@ -1805,7 +1822,7 @@ def reception_report_pdf(
     for token in tokens:
         values = [token.serial_number or token.token_number, str(token.token_date), token.service_number or "",
             label("rank_relationship", token.rank), token.patient_name, token.age, token.unit or "", token.mri_area or "",
-            token.contrast, token.film, token.report or "", label("patient_source", token.patient_source),
+            token.contrast, token.film, token.report or "", " · ".join(filter(None, [label("patient_source", token.patient_source), token.ward_text])),
             f"{label('priority_category', token.priority)} / {token.room_number}"]
         rows.append([Paragraph(escape(str(value)) if value is not None else "", cell_style) for value in values])
     table = LongTable(rows, repeatRows=1, splitInRow=1,

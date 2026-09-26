@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from .auth import require_permission
 from .database import get_db
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .models import AppSetting, AuditEvent, LookupOption, QueueToken, User
 from .schemas import LookupRead, ReportClassification, TokenRead
@@ -191,7 +191,7 @@ def classify(db: Session, payload) -> str | None:
         return configured_category(db, f'civil:{person}', 'family_civil' if person == 'family' else 'serving_civil')
     if values['entitlement'] != 'military':
         return None
-    rank = payload.sponsor_rank if person == 'family' else getattr(payload, 'rank', None)
+    rank = getattr(payload, 'rank', None)
     option = db.scalar(select(LookupOption).where(LookupOption.category == 'rank_relationship', LookupOption.value == rank, LookupOption.is_active.is_(True))) if rank else None
     if person == 'family' and not option:
         if rank:
@@ -284,7 +284,7 @@ def summary_patients(month: str | None = Query(default=None, pattern=r'^\d{4}-\d
 
 class ClassificationCorrection(ReportClassification):
     model_config = ConfigDict(extra='forbid')
-    rank: str | None = None
+    rank: str | None = Field(default=None, max_length=100)
     mode: Literal['inputs', 'direct'] = 'inputs'
     summary_category: str | None = None
 

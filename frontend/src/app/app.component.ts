@@ -1,3 +1,4 @@
+import { ServiceNumberSuggestion } from './models';
 import { ClientLogService } from './client-log.service';
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, inject } from '@angular/core';
@@ -99,7 +100,7 @@ export class AppComponent implements OnDestroy {
   classificationCategory = '';
   classificationColumns: ReportCategoryOption[] = [];
   private classificationRequest?: Subscription;
-  readonly classificationKeys = ['beneficiary_type', 'entitlement', 'service_status', 'rank', 'sponsor_rank', 'family_relationship'];
+  readonly classificationKeys = ['beneficiary_type', 'entitlement', 'service_status', 'rank', 'family_relationship'];
   get disabledClassificationFields(): string[] { return this.classificationKeys.filter(key => !this.fieldEnabled(key)); }
   get selectedClassificationDescription(): string { return this.classificationColumns.find(column => column.key === this.classificationCategory)?.description || 'Needs review keeps this patient in the report total without assigning a category.'; }
   summaryCategoryLabel(category: string | null | undefined): string {
@@ -107,7 +108,7 @@ export class AppComponent implements OnDestroy {
   }
   classificationSavedValue(key: string): string {
     const value = this.classificationTarget?.[key as keyof PatientClassification];
-    return this.lookupLabel(['rank', 'sponsor_rank'].includes(key) ? 'rank_relationship' : key, value) || 'Not recorded';
+    return this.lookupLabel(key === 'rank' ? 'rank_relationship' : key, value) || 'Not recorded';
   }
   lookupReportGroup = '';
   lookupReportCode = '';
@@ -123,10 +124,8 @@ export class AppComponent implements OnDestroy {
     return String(item?.metadata_json['report_code'] ?? value ?? '');
   }
   classificationChanged(draft: PatientClassification): void {
-    if (this.classificationCode('beneficiary_type', draft.beneficiary_type) !== 'family') {
-      draft.sponsor_rank = ''; draft.family_relationship = '';
-    } else { draft.rank = ''; }
-    if (this.classificationCode('entitlement', draft.entitlement) !== 'military') { draft.service_status = ''; draft.sponsor_rank = ''; }
+    if (this.classificationCode('beneficiary_type', draft.beneficiary_type) !== 'family') draft.family_relationship = '';
+    if (this.classificationCode('entitlement', draft.entitlement) !== 'military') draft.service_status = '';
   }
   loadMonthlySummary(): void {
     this.summaryLoading = true; this.monthlySummary = null; this.summaryPatients = null;
@@ -156,7 +155,7 @@ export class AppComponent implements OnDestroy {
     this.patientDetail = null; this.classificationTarget = patient; this.classificationError = '';
     this.classificationMode = 'direct';
     this.classificationCategory = patient.summary_category || (patient.summary_category_source === 'manual' ? '__review__' : '');
-    this.classificationDraft = {rank: patient.rank || '', beneficiary_type: patient.beneficiary_type || '', service_status: patient.service_status || '', entitlement: patient.entitlement || '', sponsor_rank: patient.sponsor_rank || '', family_relationship: patient.family_relationship || ''};
+    this.classificationDraft = {rank: patient.rank || '', beneficiary_type: patient.beneficiary_type || '', service_status: patient.service_status || '', entitlement: patient.entitlement || '', family_relationship: patient.family_relationship || ''};
     this.loadClassificationOptions();
   }
   loadClassificationOptions(): void {
@@ -222,7 +221,7 @@ export class AppComponent implements OnDestroy {
   showRoleCreator = false;
   newRole = { name: '', display_name: '', access_profile: 'reception', description: '', permissions: [] as string[] };
   newUser = { username: '', full_name: '', password: '', role: 'reception', doctor_id: '' };
-  form = { beneficiary_type: '', service_status: '', entitlement: '', sponsor_rank: '', family_relationship: '', patient_title: '', patient_name: '', patient_name_bn: '', patient_phone: '', service_category: 'civilian', rank: '', service_number: '', priority: 'normal', age: null as number | null, unit: '', mri_area: '', contrast: null as number | null, film: null as number | null, report: '', patient_source: '' };
+  form = { beneficiary_type: '', service_status: '', entitlement: '', family_relationship: '', patient_title: '', patient_name: '', patient_name_bn: '', patient_phone: '', service_category: 'civilian', rank: '', service_number: '', priority: 'normal', age: null as number | null, unit: '', mri_area: '', contrast: null as number | null, film: null as number | null, report: '', patient_source: '', ward_text: '' };
   registrationSerial = '';
   registrationServerDate = '';
   userSettingsSearch = '';
@@ -333,7 +332,7 @@ export class AppComponent implements OnDestroy {
   fieldApplicable(key: string): boolean {
     const family = this.classificationCode('beneficiary_type', this.form.beneficiary_type) === 'family';
     const military = this.classificationCode('entitlement', this.form.entitlement) === 'military';
-    return ({rank: !family, service_status: military, family_relationship: family, sponsor_rank: family && military} as Record<string, boolean>)[key] ?? true;
+    return ({service_status: military, family_relationship: family} as Record<string, boolean>)[key] ?? true;
   }
   enabledPayload<T extends object>(draft: T): T {
     return Object.fromEntries(Object.entries(draft).filter(([key]) => !(key in this.registrationFields) || this.fieldEnabled(key))) as T;
@@ -384,6 +383,7 @@ export class AppComponent implements OnDestroy {
     this.api.removeDoctor(doctor.id).subscribe({next: () => {this.reloadDoctors(); this.notify('Radiographer removed; historical records retained');}, error: error => this.message = this.apiErrorMessage(error, 'Could not remove radiographer.')});
   }
   editWaitingPatient(token: QueueToken): void {
+    this.clearServiceSearch();
     this.resetBengaliSuggestion();
     this.loadRegistrationFields();
     this.editingPatientId = token.id;
@@ -396,6 +396,7 @@ export class AppComponent implements OnDestroy {
     this.message = ''; this.showReceptionModal = true;
   }
   openRegistration(): void {
+    this.clearServiceSearch();
     this.resetBengaliSuggestion();
     this.form.patient_name_bn = '';
     this.customValues = {};
@@ -575,6 +576,7 @@ export class AppComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.clearServiceSearch();
     this.refreshScheduler.cancel();
     this.clockSubscription?.unsubscribe();
     clearTimeout(this.toastTimer);
@@ -973,6 +975,58 @@ export class AppComponent implements OnDestroy {
     this.connectRealtime();
   }
 
+  get registrationIsFamily(): boolean { return this.classificationCode('beneficiary_type', this.form.beneficiary_type) === 'family'; }
+  get isWardSource(): boolean {
+    const option = this.lookupOptions.find(item => item.category === 'patient_source' && item.value === this.form.patient_source);
+    return /\b(ward|ipd)\b/i.test(`${this.form.patient_source} ${option?.label || ''}`.replaceAll('_', ' '));
+  }
+  patientSourceChanged(): void { if (!this.isWardSource) this.form.ward_text = ''; }
+  serviceSuggestions: ServiceNumberSuggestion[] = [];
+  serviceSearchLoading = false;
+  serviceSearchError = '';
+  serviceSearchMore = false;
+  serviceSearchOpen = false;
+  private serviceSearchTimer?: ReturnType<typeof setTimeout>;
+  private serviceSearchRequest?: Subscription;
+  private serviceSearchGeneration = 0;
+  clearServiceSearch(): void {
+    clearTimeout(this.serviceSearchTimer);
+    this.serviceSearchRequest?.unsubscribe();
+    this.serviceSearchGeneration++;
+    this.serviceSuggestions = []; this.serviceSearchLoading = false; this.serviceSearchMore = false;
+    this.serviceSearchError = ''; this.serviceSearchOpen = false;
+  }
+  serviceNumberChanged(): void {
+    this.clearServiceSearch();
+    if (this.form.service_number.trim().length < 2) return;
+    this.serviceSearchTimer = setTimeout(() => this.searchServiceNumber(), 300);
+  }
+  searchServiceNumber(more = false): void {
+    const q = this.form.service_number.trim();
+    if (q.length < 2 || this.serviceSearchLoading) return;
+    const generation = this.serviceSearchGeneration;
+    this.serviceSearchLoading = true; this.serviceSearchError = ''; this.serviceSearchOpen = true;
+    this.serviceSearchRequest = this.api.serviceNumberSuggestions(q, more ? this.serviceSuggestions.length : 0).pipe(timeout(15000)).subscribe({
+      next: result => {
+        if (generation !== this.serviceSearchGeneration || q !== this.form.service_number.trim()) return;
+        this.serviceSuggestions = more ? [...this.serviceSuggestions, ...result.items] : result.items;
+        this.serviceSearchMore = result.has_more; this.serviceSearchLoading = false;
+      },
+      error: () => { if (generation === this.serviceSearchGeneration) { this.serviceSearchLoading = false; this.serviceSearchError = 'Could not search previous registrations. You can enter the patient manually.'; } },
+    });
+  }
+  selectServiceSuggestion(item: ServiceNumberSuggestion): void {
+    this.clearServiceSearch(); this.resetBengaliSuggestion();
+    Object.assign(this.form, {
+      service_number: item.service_number, patient_name: item.patient_name, patient_name_bn: item.patient_name_bn || '',
+      patient_phone: item.patient_phone || '', service_category: item.service_category, unit: item.unit || '', age: item.age ?? null,
+      rank: item.rank || '', beneficiary_type: item.beneficiary_type || '',
+      entitlement: item.entitlement || '', service_status: item.service_status || '', family_relationship: item.family_relationship || '',
+    });
+    this.classificationChanged(this.form);
+    this.notify('Patient details filled from a previous registration. Please review before saving.');
+  }
+
   createToken(): void {
     const patientName = this.form.patient_name.trim();
     if (patientName.length < 2) {
@@ -983,6 +1037,7 @@ export class AppComponent implements OnDestroy {
     this.busy = true;
     const payload = this.enabledPayload({
       ...this.form,
+      ward_text: this.isWardSource ? this.form.ward_text.trim() : '',
       custom_fields: Object.fromEntries(Object.entries(this.customValues).filter(([key]) => this.customFields.some(field => field.key === key && field.enabled))),
       patient_title: this.form.patient_title || '',
       patient_name: patientName,
@@ -1000,7 +1055,7 @@ export class AppComponent implements OnDestroy {
     request.subscribe({
       next: (token) => {
         this.notify(`Patient ${this.editingPatientId ? 'updated' : 'added'} · ${token.serial_number || token.token_number}`);
-        this.form.beneficiary_type = this.form.service_status = this.form.entitlement = this.form.sponsor_rank = this.form.family_relationship = '';
+        this.form.beneficiary_type = this.form.service_status = this.form.entitlement = this.form.family_relationship = '';
         this.form.priority = 'normal';
         this.customValues = {};
         this.form.patient_name = '';
@@ -1010,7 +1065,8 @@ export class AppComponent implements OnDestroy {
         this.form.rank = '';
         this.form.service_number = '';
         this.form.age = this.form.contrast = this.form.film = null;
-        this.form.unit = this.form.mri_area = this.form.report = this.form.patient_source = '';
+        this.form.unit = this.form.mri_area = this.form.report = this.form.patient_source = this.form.ward_text = '';
+        this.clearServiceSearch();
         this.busy = false;
         this.showReceptionModal = false;
         this.refresh();

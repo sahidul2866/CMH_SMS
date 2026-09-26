@@ -14,7 +14,7 @@ FIELDS = {
     'mri_area': 'Area of body for MRI', 'contrast': 'Contrast', 'film': 'Film', 'report': 'Report',
     'rank': 'Designation / Rank', 'priority': 'Patient priority',
     'beneficiary_type': 'Patient type', 'entitlement': 'Entitlement', 'service_status': 'Service status',
-    'sponsor_rank': 'Sponsor rank', 'family_relationship': 'Family relationship',
+    'family_relationship': 'Family relationship',
 }
 
 
@@ -22,7 +22,7 @@ def requirements(db):
     setting = db.get(AppSetting, 'registration_fields')
     value = setting.value if setting else {}
     form_setting = db.get(AppSetting, 'patient_form')
-    return {'appearance': {**FORM_DEFAULTS, **(form_setting.value if form_setting else {})}, 'fields': FIELDS, 'required': value.get('required', ['patient_name', 'family_relationship', 'sponsor_rank']),
+    return {'appearance': {**FORM_DEFAULTS, **(form_setting.value if form_setting else {})}, 'fields': FIELDS, 'required': value.get('required', ['patient_name', 'family_relationship']),
             'enabled': value.get('enabled', list(FIELDS)), 'custom': value.get('custom', [])}
 
 
@@ -75,12 +75,19 @@ def applicable(db, payload, key):
         option = db.scalar(select(LookupOption).where(LookupOption.category == field, LookupOption.value == value)) if value else None
         return (option.metadata_json or {}).get('report_code', value) if option else value
     family, military = code('beneficiary_type') == 'family', code('entitlement') == 'military'
-    return {'rank': not family, 'service_status': military, 'family_relationship': family,
-            'sponsor_rank': family and military}.get(key, True)
+    return {'service_status': military, 'family_relationship': family}.get(key, True)
 
 
 def blank(value):
     return value is None or isinstance(value, str) and not value.strip()
+
+
+def is_ward_source(db, value):
+    from sqlalchemy import select
+    from .models import LookupOption
+    option = db.scalar(select(LookupOption).where(LookupOption.category == 'patient_source', LookupOption.value == value)) if value else None
+    label = f"{value or ''} {option.label if option else ''}".replace('_', ' ')
+    return bool(re.search(r'\b(ward|ipd)\b', label, re.IGNORECASE))
 
 
 def validate_registration(db, payload, existing=None, check_required=True):
@@ -94,6 +101,9 @@ def validate_registration(db, payload, existing=None, check_required=True):
             raise HTTPException(422, f'{FIELDS[key]} is disabled and cannot accept input')
         updates[key] = getattr(existing, key) if existing else type(payload).model_fields[key].default
     payload = payload.model_copy(update=updates)
+    if hasattr(payload, 'ward_text'):
+        payload = payload.model_copy(update={'ward_text': (payload.ward_text or '').strip() or None
+                                            if is_ward_source(db, payload.patient_source) else None})
     missing = [FIELDS[key] for key in config['required'] if key in enabled and key in type(payload).model_fields
                and applicable(db, payload, key) and blank(getattr(payload, key))]
     if missing and check_required:

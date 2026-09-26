@@ -70,6 +70,12 @@ export const demoInterceptor: HttpInterceptorFn = (request, next) => {
     active.forEach(token => {token.status = 'completed';});
     return json({completed: active.length});
   }
+  if (path === '/registration/service-number-suggestions' && request.method === 'GET') {
+    const q = (request.params.get('q') || '').trim().toLowerCase();
+    const offset = Number(request.params.get('offset') || 0);
+    const rows = tokens.filter(token => q.length >= 2 && token.service_number?.toLowerCase().startsWith(q));
+    return json({items: rows.slice(offset, offset + 50), has_more: rows.length > offset + 50});
+  }
   if (path === '/dashboard' && request.method === 'GET') return json(dashboard());
   if (path === '/tokens' && request.method === 'GET') {
     const doctorId = request.params.get('doctor_id');

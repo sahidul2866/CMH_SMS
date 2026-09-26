@@ -39,7 +39,6 @@ export interface PatientClassification {
   beneficiary_type?: string | null;
   service_status?: string | null;
   entitlement?: string | null;
-  sponsor_rank?: string | null;
   family_relationship?: string | null;
   rank?: string | null;
 }
@@ -67,6 +66,7 @@ export interface QueueToken extends PatientClassification {
   film?: number | null;
   report?: string | null;
   patient_source?: string | null;
+  ward_text?: string | null;
   patient_title?: string | null;
   patient_name: string;
   patient_name_bn?: string | null;
@@ -185,3 +185,8 @@ export interface RegistrationFields {
 export interface ReportCategoryOption { key: string; label: string; description: string; report_label: string; }
 export interface ClassificationOptions { columns: ReportCategoryOption[]; registration: RegistrationFields; lookups: LookupOption[]; }
 export interface ClassificationUpdate extends PatientClassification { mode: 'inputs' | 'direct'; summary_category?: string | null; }
+
+export interface ServiceNumberSuggestion extends PatientClassification {
+  id: string; service_number: string; patient_name: string; patient_name_bn?: string | null;
+  patient_phone: string; service_category: string; unit?: string | null; age?: number | null; created_at: string;
+}

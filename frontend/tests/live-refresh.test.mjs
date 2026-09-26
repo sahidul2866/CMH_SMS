@@ -148,3 +148,48 @@ test('browser diagnostics batch and deduplicate errors without retrying a failed
   assert.equal(requests.length, 2, 'idle diagnostics never poll');
   injector.destroy();
 });
+
+test('service search debounces, cancels stale responses and fills the selected family member', t => {
+  const {app, counts, responses} = fixture(t);
+  const old = new Subject();
+  responses.serviceNumberSuggestions = old;
+  app.form.service_number = 'BA'; app.serviceNumberChanged();
+  t.mock.timers.tick(100);
+  app.form.service_number = 'BA-1'; app.serviceNumberChanged();
+  t.mock.timers.tick(299);
+  assert.equal(counts.serviceNumberSuggestions, undefined);
+  t.mock.timers.tick(1);
+  assert.equal(counts.serviceNumberSuggestions, 1);
+  const current = new Subject();
+  responses.serviceNumberSuggestions = current;
+  app.form.service_number = 'BA-12'; app.serviceNumberChanged();
+  t.mock.timers.tick(300);
+  old.next({items: [{patient_name: 'Wrong person'}], has_more: false});
+  assert.deepEqual(app.serviceSuggestions, []);
+  const child = {id: 'child', service_number: 'BA-12', patient_name: 'Child Name', patient_phone: '123', unit: 'Unit 4',
+    beneficiary_type: 'family', entitlement: 'military', family_relationship: 'child', rank: 'major', service_category: 'dependant', age: 12};
+  current.next({items: [child], has_more: false}); current.complete();
+  app.form.priority = 'normal'; app.form.mri_area = 'Knee';
+  app.selectServiceSuggestion(child);
+  assert.equal(app.form.patient_name, 'Child Name');
+  assert.equal(app.form.rank, 'major');
+  assert.equal(app.form.priority, 'normal');
+  assert.equal(app.form.mri_area, 'Knee');
+  assert.equal(app.form.age, 12);
+  assert.equal(app.serviceSearchOpen, false);
+});
+
+test('rank stays in the single registration control when switching to family and back', t => {
+  const {app} = fixture(t);
+  app.form.rank = 'major';
+  app.form.beneficiary_type = 'family'; app.classificationChanged(app.form);
+  assert.equal(app.form.rank, 'major');
+  app.form.rank = 'captain';
+  app.form.beneficiary_type = 'self'; app.classificationChanged(app.form);
+  assert.equal(app.form.rank, 'captain');
+  assert.equal('sponsor_rank' in app.form, false);
+  app.form.patient_source = 'ipd';
+  assert.equal(app.isWardSource, true);
+  app.form.ward_text = 'Ward 7'; app.form.patient_source = 'opd'; app.patientSourceChanged();
+  assert.equal(app.form.ward_text, '');
+});

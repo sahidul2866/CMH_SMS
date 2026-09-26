@@ -1,3 +1,4 @@
+import { ServiceNumberSuggestion } from './models';
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 
@@ -61,6 +62,9 @@ export class QueueApiService {
   updateWaitingPatient(id: string, payload: Record<string, unknown>) { return this.http.patch<QueueToken>(`${this.baseUrl}/tokens/${id}`, payload); }
   makeAvailable(doctorId: string, activeTokenIds: string[]) {
     return this.http.post<{completed: number}>(`${this.baseUrl}/doctors/${doctorId}/make-available`, {active_token_ids: activeTokenIds});
+  }
+  serviceNumberSuggestions(q: string, offset = 0) {
+    return this.http.get<{items: ServiceNumberSuggestion[]; has_more: boolean}>(`${this.baseUrl}/registration/service-number-suggestions`, {params: {q, offset}});
   }
   radiographerStatus() { return this.http.get<{id: string; name: string; room: string; occupied: boolean; active_token_ids: string[]}[]>(`${this.baseUrl}/radiographers/status`); }
   createDoctor(payload: Record<string, unknown>) { return this.http.post(`${this.baseUrl}/admin/doctors`, payload); }

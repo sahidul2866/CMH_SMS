@@ -474,7 +474,7 @@ class QueueService:
         return {item.value: int(item.metadata_json.get("weight", item.sort_order)) for item in configured}
 
     def display(self, waiting_room: str) -> DisplayRead:
-        clinical_fields = dict.fromkeys(("age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "beneficiary_type", "service_status", "entitlement", "sponsor_rank", "family_relationship", "summary_category"))
+        clinical_fields = dict.fromkeys(("age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "ward_text", "beneficiary_type", "service_status", "entitlement", "family_relationship", "summary_category"))
         room_tokens = [token.model_copy(update=clinical_fields) for token in self.list_tokens(waiting_room=waiting_room)]
         all_tokens = [token.model_copy(update=clinical_fields) for token in self.list_tokens()]
         active_calls = sorted(

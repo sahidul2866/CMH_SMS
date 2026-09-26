@@ -10,7 +10,6 @@ class ReportClassification(BaseModel):
     beneficiary_type: str | None = Field(default=None, max_length=100)
     service_status: str | None = Field(default=None, max_length=100)
     entitlement: str | None = Field(default=None, max_length=100)
-    sponsor_rank: str | None = Field(default=None, max_length=100)
     family_relationship: str | None = Field(default=None, max_length=100)
 
 
@@ -23,6 +22,7 @@ class TokenCreate(ReportClassification):
     film: int | None = Field(default=None, ge=0)
     report: str | None = Field(default=None, max_length=10000)
     patient_source: str | None = Field(default=None, max_length=100)
+    ward_text: str | None = Field(default=None, max_length=240)
 
     patient_title: str | None = Field(default=None, max_length=30)
     patient_name: str = Field(min_length=2, max_length=160)
@@ -36,7 +36,7 @@ class TokenCreate(ReportClassification):
 
     patient_phone: str = Field(default="", max_length=30)
     service_category: str = Field(default="civilian", min_length=1, max_length=30)
-    rank: str | None = Field(default=None, max_length=60)
+    rank: str | None = Field(default=None, max_length=100)
     service_number: str | None = Field(default=None, max_length=40)
     doctor_id: str | None = None
     doctor_name: str = ""

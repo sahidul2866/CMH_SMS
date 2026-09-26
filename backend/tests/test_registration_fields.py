@@ -98,13 +98,13 @@ def test_disabled_family_fields_do_not_block_registration():
     from app.seed import seed
     seed()
     config = client.get('/api/v1/registration-fields').json()
-    save_policy(required=['patient_name'], enabled=[key for key in config['enabled'] if key not in ['sponsor_rank', 'family_relationship', 'rank']])
+    save_policy(required=['patient_name'], enabled=[key for key in config['enabled'] if key not in ['family_relationship', 'rank']])
     payload = {**token_payload(), 'beneficiary_type': 'family', 'entitlement': 'military', 'service_status': 'serving'}
     payload.pop('rank')
     result = client.post('/api/v1/tokens', json=payload)
     assert result.status_code == 201, result.text
     assert result.json()['summary_category'] is None
-    assert client.patch(f"/api/v1/tokens/{result.json()['id']}/classification", json={'sponsor_rank': 'captain'}).status_code == 422
+    assert client.patch(f"/api/v1/tokens/{result.json()['id']}/classification", json={'rank': 'captain'}).status_code == 422
 
 
 def test_configuration_is_audited_and_survives_seed():
