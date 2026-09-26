@@ -119,7 +119,7 @@ call :free_port %BACKEND_PORT%
 if errorlevel 1 goto :failed
 
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ip=(Get-NetIPAddress -AddressFamily IPv4 ^| Where-Object {$_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown'} ^| Sort-Object InterfaceMetric ^| Select-Object -First 1 -ExpandProperty IPAddress); if($ip){$ip}else{'SERVER-PC-IP'}"`) do set "LAN_IP=%%I"
-set "CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1"
+set "CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1,10.0.0.0/8"
 if not "!LAN_IP!"=="SERVER-PC-IP" set "CMH_SMS_ALLOWED_HOSTS=!CMH_SMS_ALLOWED_HOSTS!,!LAN_IP!"
 
 echo [7/9] Configuring Windows Firewall for the hospital LAN...
@@ -131,11 +131,12 @@ if errorlevel 1 (
     echo       Firewall rule already exists.
 )
 
-echo [8/9] Starting the LAN-visible CMH Smart Serial server...
-set "CMH_WINDOWS_BACKEND_DIR=%BACKEND_DIR%"
-set "CMH_WINDOWS_PYTHON=%VENV_PYTHON%"
-set "CMH_WINDOWS_BACKEND_PORT=%BACKEND_PORT%"
-start "CMH Smart Serial - Server" "%PROJECT_DIR%START_BACKEND_WINDOWS.bat"
+echo [8/9] Installing automatic recovery and starting the server...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%scripts\install_source_autostart.ps1"
+if errorlevel 1 (
+    echo ERROR: Automatic recovery could not be installed. Run this launcher as Administrator.
+    goto :failed
+)
 
 echo [9/9] Waiting for the application to become ready...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -159,7 +160,9 @@ echo   API docs:    http://127.0.0.1:%BACKEND_PORT%/docs
 echo ============================================================
 echo.
 echo Connect every radiographer PC and this server to the same wired switch.
-echo Keep the Server window open while using the app.
+echo Automatic recovery is enabled, including after the Server window closes.
+echo Keep this Windows user signed in for announcements.
+echo To stop for maintenance, run STOP_CMH_WINDOWS.bat as Administrator.
 pause
 exit /b 0
 

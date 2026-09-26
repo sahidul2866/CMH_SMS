@@ -185,7 +185,7 @@ CMH_SMS_ADMIN_USERNAME=admin
 CMH_SMS_ADMIN_PASSWORD=$ADMIN_PASSWORD
 CMH_SMS_AUDIO_ENABLED=true
 CMH_SMS_ENVIRONMENT=development
-CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1
+CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1,10.0.0.0/8
 CMH_SMS_PUBLIC_HTTPS=false
 CMH_SMS_COOKIE_SECURE=false
 CMH_SMS_SEED_DEMO=false
@@ -285,7 +285,7 @@ trap cleanup EXIT INT TERM
 
 SERVER_LAN_IP="$(lan_ip)"
 if [[ -z "${CMH_SMS_ALLOWED_HOSTS:-}" ]]; then
-  export CMH_SMS_ALLOWED_HOSTS="localhost,127.0.0.1"
+  export CMH_SMS_ALLOWED_HOSTS="localhost,127.0.0.1,10.0.0.0/8"
 fi
 if [[ "${CMH_SMS_ENVIRONMENT:-development}" != "production" && -n "$SERVER_LAN_IP" &&
       ",${CMH_SMS_ALLOWED_HOSTS:-}," != *",$SERVER_LAN_IP,"* && "${CMH_SMS_ALLOWED_HOSTS:-}" != "*" ]]; then

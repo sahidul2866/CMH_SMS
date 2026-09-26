@@ -272,10 +272,6 @@ class QueueService:
         if action == "recall":
             if token.priority == "vip":
                 raise HTTPException(409, "VIP patients must be called physically; electronic recall is disabled")
-            queue_setting = self.db.get(AppSetting, "queue")
-            recall_limit = int((queue_setting.value if queue_setting else {}).get("recall_limit", 3))
-            if token.recall_count >= recall_limit:
-                raise HTTPException(409, f"Recall limit of {recall_limit} has been reached")
         if action == "call_physically":
             self._assign_for_call(token, doctor)
         token.status = new_status

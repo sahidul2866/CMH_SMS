@@ -25,10 +25,10 @@ ROOMS = [
     ("waiting-room-4", "WR-4", "Orthopaedics Waiting Room", "4th Floor", "Orthopaedics"),
 ]
 DOCTORS = [
-    ("dr-khan", "Dr. Ayesha Khan", "Medicine", "Consultant", "205", "waiting-room-1", "AK"),
-    ("dr-rahman", "Dr. Farhan Rahman", "Cardiology", "Senior Consultant", "312", "waiting-room-2", "FR"),
-    ("dr-sultana", "Dr. Nusrat Sultana", "Paediatrics", "Consultant", "118", "waiting-room-3", "NS"),
-    ("dr-chowdhury", "Dr. Imran Chowdhury", "Orthopaedics", "Senior Consultant", "407", "waiting-room-4", "IC"),
+    ("dr-khan", "SWO Jamil Ahmed", "Medicine", "Consultant", "110", "waiting-room-1", "AK"),
+    ("dr-rahman", "WO Hasanuzzaman", "Cardiology", "Senior Consultant", "116", "waiting-room-2", "FR"),
+    ("dr-sultana", "SST Md. Delwar Hossain", "Paediatrics", "Consultant", "104", "waiting-room-3", "NS"),
+    ("dr-chowdhury", "SNK Azim Uddin", "Orthopaedics", "Senior Consultant", "117", "waiting-room-4", "IC"),
 ]
 PATIENTS = [
     ("Md. Rahim Uddin", "01711000001", "appointment", "normal", "army", "Major", "BA-10234"),
@@ -188,7 +188,7 @@ def seed() -> None:
         ensure(
             AppSetting(
                 key="queue",
-                value={"ordering_policy": "priority_then_sequence", "recall_limit": 3, "late_grace_minutes": 15},
+                value={"ordering_policy": "priority_then_sequence", "late_grace_minutes": 15},
                 description="Queue ordering and transition policy",
             )
         )

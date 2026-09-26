@@ -33,7 +33,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from .trusted_hosts import NetworkTrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -268,7 +268,7 @@ def _expand_allowed_hosts_from_origins(origins: list[str]) -> list[str]:
 cors_origins = _collect_cors_origins()
 allow_origin_regex = r"https?://.*\.devtunnels\.ms"
 allowed_hosts = list(dict.fromkeys(allowed_hosts + _expand_allowed_hosts_from_origins(cors_origins)))
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts or ["*"])
+app.add_middleware(NetworkTrustedHostMiddleware, allowed_hosts=allowed_hosts or ["*"])
 if cors_origins or allow_origin_regex:
     app.add_middleware(
         CORSMiddleware,
@@ -386,9 +386,12 @@ def enforce_doctor_access(user: User, doctor_id: str, db: Session) -> None:
 
 
 def validated_setting(key: str, value: dict) -> dict:
+    if key == "queue":
+        # Ignore obsolete caps from existing databases and older clients.
+        value = {name: item for name, item in value.items() if name != "recall_limit"}
     allowed = {
         "display": {"privacy_mode", "next_token_count", "ticker_message"},
-        "queue": {"ordering_policy", "recall_limit", "late_grace_minutes"},
+        "queue": {"ordering_policy", "late_grace_minutes"},
         "announcement": {"enabled", "language_order", "repeat_count", "rate", "volume", "voice_mode", "cache_max_files"},
     }
     if key not in allowed:
@@ -416,7 +419,6 @@ def validated_setting(key: str, value: dict) -> dict:
     elif key == "queue":
         if value.get("ordering_policy") not in {"priority_then_sequence", "sequence"}:
             raise HTTPException(422, "ordering_policy is invalid")
-        integer("recall_limit", 0, 10)
         integer("late_grace_minutes", 0, 240)
     else:
         if not isinstance(value.get("enabled", True), bool):

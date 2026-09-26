@@ -102,6 +102,43 @@ class PostgresLauncherTests(unittest.TestCase):
         self.assertEqual(launch.call_args.args[0][1:], ['-m', 'alembic', 'upgrade', 'head'])
         self.assertEqual(launch.call_args.kwargs['env']['CMH_SMS_DATABASE_MODE'], 'postgres')
 
+    def test_server_exit_code_is_returned_to_supervisor(self):
+        pg.save_config({'url': 'postgresql://app:secret@localhost/cmh_sms'})
+        for code in (0, 1, 23):
+            with self.subTest(code=code), patch.object(pg.sys, 'argv', ['helper', 'uvicorn', 'app.main:app']), \
+                    patch.object(pg, 'connect'), patch.object(pg.subprocess, 'call', return_value=code):
+                self.assertEqual(pg.main(), code)
+
+    def test_database_outage_returns_failure_then_next_attempt_recovers(self):
+        pg.save_config({'url': 'postgresql://app:private-password@localhost/cmh_sms'})
+        with patch.object(pg.sys, 'argv', ['helper', 'uvicorn', 'app.main:app']), \
+                patch.object(pg.subprocess, 'call', return_value=0) as launch:
+            with patch.object(pg, 'connect', side_effect=pg.psycopg.OperationalError('private-password')), \
+                    patch('builtins.print') as output:
+                self.assertEqual(pg.main(), 1)
+                launch.assert_not_called()
+                self.assertNotIn('private-password', str(output.call_args_list))
+            with patch.object(pg, 'connect'):
+                self.assertEqual(pg.main(), 0)
+                launch.assert_called_once()
+
+    def test_missing_executable_returns_failure_without_leaking_credentials(self):
+        pg.save_config({'url': 'postgresql://app:private-password@localhost/cmh_sms'})
+        with patch.object(pg.sys, 'argv', ['helper', 'uvicorn', 'app.main:app']), \
+                patch.object(pg, 'connect'), \
+                patch.object(pg.subprocess, 'call', side_effect=OSError('private-password')), \
+                patch('builtins.print') as output:
+            self.assertEqual(pg.main(), 1)
+            self.assertNotIn('private-password', str(output.call_args_list))
+
+    def test_restart_reloads_saved_configuration(self):
+        with patch.object(pg.sys, 'argv', ['helper', 'uvicorn', 'app.main:app']), \
+                patch.object(pg, 'connect'), patch.object(pg.subprocess, 'call', return_value=0) as launch:
+            for database in ('original', 'repaired'):
+                pg.save_config({'url': f'postgresql://app:secret@localhost/{database}'})
+                self.assertEqual(pg.main(), 0)
+                self.assertTrue(launch.call_args.kwargs['env']['CMH_SMS_DATABASE_URL'].endswith('/' + database))
+
 
 if __name__ == '__main__':
     unittest.main()

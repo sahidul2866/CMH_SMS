@@ -320,3 +320,8 @@ On Windows PowerShell:
 ```powershell
 Get-Content backend/data/logs/application.jsonl -Tail 100 -Wait
 ```
+
+For access through a server address in the `10.*` LAN range, use
+`CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1,192.168.0.103,10.0.0.0/8`.
+CIDR entries validate the requested server host for HTTP and WebSocket traffic;
+they do not filter client IP addresses. Restart the server after changing this setting.

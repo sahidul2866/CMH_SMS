@@ -34,7 +34,8 @@ are saved in `.setup\INITIAL_ADMIN_LOGIN.txt`. Keep `.setup` private and retain 
 on this PC for subsequent launches. The root `.env` is not loaded by the Windows
 source launcher.
 
-Open `http://127.0.0.1:8100` and sign in. Keep the Server window open.
+Open `http://127.0.0.1:8100` and sign in. Setup also installs and starts the
+`CMH Smart Serial Server` scheduled task for the current Windows account.
 Check `http://127.0.0.1:8100/api/v1/ready` for database readiness.
 
 ## Existing or remote PostgreSQL database
@@ -67,13 +68,64 @@ Creating a new PostgreSQL database does not transfer records from another PC.
 
 Run `RUN_WINDOWS.bat` again. It applies pending migrations and idempotent seed
 updates using the saved PostgreSQL connection and rebuilds the current frontend
-source automatically. Stop the existing server before relaunching.
+source automatically. Before relaunching for an update, run
+`STOP_CMH_WINDOWS.bat` as administrator and wait for port 8100 to be released.
 
-After setup succeeds, run `INSTALL_AUTOSTART_WINDOWS.bat` as administrator under
-the same Windows account used for setup. It starts the server at that user's
-login, restarts it after crashes, and disables AC sleep/hibernation. Keep the user
-signed in for Windows audio; lock with `Win+L` instead of signing out.
-`UNINSTALL_AUTOSTART_WINDOWS.bat` removes the scheduled task without deleting data.
+`RUN_WINDOWS.bat` enables automatic recovery after a successful build:
+
+- If the application process exits, the supervisor retries after 10 seconds,
+  including when PostgreSQL is temporarily unavailable during startup.
+- If the supervisor/server window closes, Task Scheduler attempts to start it
+  again at the next one-minute check. Checks do not start another instance while
+  the scheduled task is running.
+- After a reboot, the server starts when the setup user signs in. Keep this user
+  signed in for Windows audio; lock with `Win+L` instead of signing out.
+- Recovery launches the built app using the saved configuration. It does not
+  reinstall dependencies, rebuild the frontend, or rerun migrations.
+
+Run `STOP_CMH_WINDOWS.bat` as administrator for an intentional maintenance stop.
+It disables the scheduled task before stopping it, so automatic recovery stays
+off until you run `RUN_WINDOWS.bat` or `INSTALL_AUTOSTART_WINDOWS.bat` again.
+Closing a server window is no longer a permanent stop.
+
+`INSTALL_AUTOSTART_WINDOWS.bat` can also enable recovery without rebuilding under
+the same Windows account used for setup; it additionally disables AC sleep and
+hibernation. `UNINSTALL_AUTOSTART_WINDOWS.bat` removes the scheduled task without
+deleting data. Run these management scripts as administrator.
+
+Recovery requires Windows to be awake and the setup account signed in. It handles
+process exits, not a process that remains running but hangs. Persistent configuration
+errors still need correction; retries cannot repair a failed disk or database.
+
+### Verify recovery on the Windows server
+
+Automated launcher tests can be run from the project root on Windows:
+
+```bat
+backend\.venv\Scripts\python.exe -m unittest discover -s scripts/tests -p "test_windows*.py" -v
+```
+
+The **Windows launcher tests** GitHub Actions workflow runs this suite on a
+Windows runner after relevant pushes and pull requests. Once the workflow is on
+the default branch, it can also be started from GitHub's Actions tab using
+**Run workflow**, including from a Mac. No Windows installation is needed locally.
+
+The suite checks PostgreSQL launch failures and recovery, executes the actual
+batch retry loop with a disposable app, and executes the PowerShell task setup
+and maintenance commands with mocked scheduling operations. It never changes
+the real CMH scheduled task. On macOS, the Windows-native tests are explicitly
+skipped. These automated tests do not prove real Task Scheduler relaunch, login
+startup, database integration, or speaker output; verify those on Windows below.
+
+1. Run `RUN_WINDOWS.bat` as administrator and check `/api/v1/ready` returns 200.
+2. In Task Manager, end the app's Uvicorn Python process. Confirm readiness returns
+   after the 10-second retry plus startup time.
+3. Close the Always On Server window. Confirm it reopens and readiness returns
+   after the next one-minute check plus startup time.
+4. Run `STOP_CMH_WINDOWS.bat`. Confirm port 8100 is released and the server stays
+   stopped for more than one minute. Enable it again using the install script.
+5. Restart Windows and sign in as the setup user. Confirm readiness and test an
+   announcement. Inspect the task in Task Scheduler if recovery does not occur.
 
 PostgreSQL runs as a separate Windows service. Closing the application does not
 stop the database service.

@@ -338,7 +338,6 @@ export class AppComponent implements OnDestroy {
   }
   customFieldLabel(key: string): string { return this.customFields.find(field => field.key === key)?.label || key; }
   editingPatientId = '';
-  registrationDoctorId = '';
   releasingDoctorId = '';
   canMakeAvailable(doctorId: string): boolean {
     return this.hasPermission('queue.action') &&
@@ -397,7 +396,6 @@ export class AppComponent implements OnDestroy {
   openRegistration(): void {
     this.resetBengaliSuggestion();
     this.form.patient_name_bn = '';
-    this.registrationDoctorId = '';
     this.customValues = {};
     this.loadRegistrationFields();
     if (this.editingPatientId) {
@@ -989,7 +987,7 @@ export class AppComponent implements OnDestroy {
       patient_phone: this.form.patient_phone.trim(),
       rank: this.form.rank || '',
       service_number: this.form.service_number.trim(),
-      doctor_id: this.registrationDoctorId || null,
+      doctor_id: null,
       doctor_name: '',
       department: '',
       room_number: '',

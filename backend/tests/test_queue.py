@@ -557,7 +557,7 @@ def test_doctor_state_transitions_are_validated_and_audited():
     assert "queue.complete" in actions
 
 
-def test_same_patient_can_be_announced_again_with_recall_limit():
+def test_recalls_are_unlimited_even_with_a_legacy_limit():
     from app.database import SessionLocal
     from app.models import AppSetting
 
@@ -566,18 +566,17 @@ def test_same_patient_can_be_announced_again_with_recall_limit():
         db.commit()
     token = client.post("/api/v1/tokens", json=token_payload()).json()
     client.post(f"/api/v1/doctors/dr-khan/tokens/{token['id']}/call").raise_for_status()
-    first = client.post(
-        f"/api/v1/doctors/dr-khan/tokens/{token['id']}/action", json={"action": "recall", "actor": "doctor.test"}
-    ).json()
-    second = client.post(
-        f"/api/v1/doctors/dr-khan/tokens/{token['id']}/action", json={"action": "recall", "actor": "doctor.test"}
-    ).json()
-    assert first["recall_count"] == 1
-    assert second["recall_count"] == 2
-    blocked = client.post(
-        f"/api/v1/doctors/dr-khan/tokens/{token['id']}/action", json={"action": "recall", "actor": "doctor.test"}
-    )
-    assert blocked.status_code == 409
+    for count in range(1, 16):
+        response = client.post(
+            f"/api/v1/doctors/dr-khan/tokens/{token['id']}/action", json={"action": "recall"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["recall_count"] == count
+    saved = client.put('/api/v1/settings/queue', json={'value': {
+        'ordering_policy': 'priority_then_sequence', 'late_grace_minutes': 15, 'recall_limit': 3,
+    }})
+    assert saved.status_code == 200, saved.text
+    assert 'recall_limit' not in saved.json()['value']
 
 
 def test_paused_queue_blocks_call_next_until_resumed():
