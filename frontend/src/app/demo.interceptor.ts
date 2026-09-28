@@ -21,7 +21,7 @@ const json = (body: unknown, status = 200) => of(new HttpResponse({ body, status
 let lookupValues = [
   ['service_category', 'army', 'Bangladesh Army'], ['service_category', 'dependant', 'Service dependant'], ['service_category', 'retired', 'Retired service'], ['service_category', 'civilian', 'Civilian'],
   ['priority_category', 'normal', 'Normal'], ['priority_category', 'priority', 'Priority'], ['priority_category', 'urgent', 'Urgent'], ['priority_category', 'vip', 'VIP'],
-  ['patient_source', 'opd', 'OPD'], ['patient_source', 'ipd', 'IPD / Ward'], ['patient_source', 'emergency', 'Emergency'], ['rank_relationship', 'brigadier_general', 'Brigadier General'], ['rank_relationship', 'shoinik', 'Shoinik / Sainik'], ['rank_relationship', 'vip', 'VIP'], ['room_number', '205', 'Room 205'], ['room_number', '207', 'Room 207'], ['rank_relationship', 'officer', 'Officer'], ['rank_relationship', 'soldier', 'Soldier'],
+  ['patient_source', 'opd', 'OPD'], ['patient_source', 'ipd', 'IPD / Ward'], ['patient_source', 'emergency', 'Emergency'], ['rank_relationship', 'brigadier_general', 'Brigadier General'], ['rank_relationship', 'snk', 'SNK'], ['rank_relationship', 'vip', 'VIP'], ['room_number', '205', 'Room 205'], ['room_number', '207', 'Room 207'], ['rank_relationship', 'officer', 'Officer'], ['rank_relationship', 'other', 'Other'],
 ].map(([category, value, label], index) => ({ id: `lookup-${index}`, category, value, label, sort_order: index, metadata_json: (value === 'brigadier_general' || value === 'vip' ? { priority: 'vip' } : {}) as Record<string, unknown>, is_active: true }));
 
 function dashboard() {

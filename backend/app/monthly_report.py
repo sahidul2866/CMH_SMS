@@ -45,7 +45,7 @@ CLASSIFICATION_LOOKUPS = {
     'family_relationship': [('spouse', 'Spouse'), ('child', 'Child'), ('parent', 'Parent'), ('other', 'Other dependent')],
 }
 RANK_GROUPS = dict.fromkeys(['brigadier_general', 'colonel', 'lieutenant_colonel', 'major', 'captain', 'lieutenant', 'officer'], 'officer')
-RANK_GROUPS.update(afns='officer', cadet='cadet', nce='nce', warrant_officer='jco', jco='jco', sergeant='or', corporal='or', shoinik='or', soldier='or')
+RANK_GROUPS.update(afns='officer', cadet='cadet', nce='nce', warrant_officer='jco', jco='jco', sergeant='or', corporal='or', shoinik='or', soldier='or', snk='or')
 router = APIRouter(prefix='/api/v1', tags=['Monthly MRI summary'])
 
 
@@ -178,6 +178,9 @@ def classify(db: Session, payload) -> str | None:
             continue
         option = db.scalar(select(LookupOption).where(LookupOption.category == field, LookupOption.value == value, LookupOption.is_active.is_(True)))
         if not option:
+            if not db.scalar(select(LookupOption.id).where(LookupOption.category == field).limit(1)):
+                values[field] = value
+                continue
             raise HTTPException(422, f'Unknown or inactive {field.replace("_", " ")}')
         values[field] = (option.metadata_json or {}).get('report_code', value)
     if values.get('beneficiary_type') in ('re', 'cne'):
@@ -195,7 +198,9 @@ def classify(db: Session, payload) -> str | None:
     if values.get('entitlement') and values.get('entitlement') != 'military':
         return None
     rank = getattr(payload, 'rank', None)
-    option = db.scalar(select(LookupOption).where(LookupOption.category == 'rank_relationship', LookupOption.value == rank, LookupOption.is_active.is_(True))) if rank else None
+    option = db.scalar(select(LookupOption).where(LookupOption.category == 'rank_relationship', LookupOption.value == rank)) if rank else None
+    if option and not option.is_active and not (option.metadata_json or {}).get('pending_approval'):
+        option = None
     if person == 'family' and not option:
         if rank:
             raise HTTPException(422, 'Select an active sponsor rank for a military family patient')

@@ -766,9 +766,10 @@ def lookups(
     stmt = select(LookupOption)
     if category:
         stmt = stmt.where(LookupOption.category == category)
+    rows = list(db.scalars(stmt.order_by(LookupOption.category, LookupOption.sort_order, LookupOption.label)))
     if not include_inactive or not has_permission(user, db, "master_data.manage"):
-        stmt = stmt.where(LookupOption.is_active.is_(True))
-    return list(db.scalars(stmt.order_by(LookupOption.category, LookupOption.sort_order, LookupOption.label)))
+        rows = [row for row in rows if row.is_active or (row.metadata_json or {}).get("pending_approval")]
+    return rows
 
 
 @app.post("/api/v1/lookups", response_model=LookupRead, status_code=201)

@@ -66,6 +66,7 @@ class QueueService:
         from .monthly_report import classify
 
         values = payload.model_dump()
+        values.pop("other_rank", None)
         values["summary_category"] = classify(self.db, payload)
         # Reception registrations join the shared pool. Explicit appointment assignments remain supported.
         values.update(doctor_id=doctor.id if doctor else None,
@@ -452,10 +453,10 @@ class QueueService:
     def _require_lookup(self, category: str, value: str) -> LookupOption:
         item = self.db.scalar(
             select(LookupOption).where(
-                LookupOption.category == category, LookupOption.value == value, LookupOption.is_active.is_(True)
+                LookupOption.category == category, LookupOption.value == value
             )
         )
-        if not item:
+        if not item or (not item.is_active and not (item.metadata_json or {}).get("pending_approval")):
             if not self.db.scalar(select(LookupOption.id).where(LookupOption.category == category).limit(1)):
                 return LookupOption(category=category, value=value, label=value)
             raise HTTPException(422, f"Invalid or inactive {category.replace('_', ' ')}")

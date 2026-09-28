@@ -37,6 +37,7 @@ class TokenCreate(ReportClassification):
     patient_phone: str = Field(default="", max_length=30)
     service_category: str = Field(default="civilian", min_length=1, max_length=30)
     rank: str | None = Field(default=None, max_length=100)
+    other_rank: str | None = Field(default=None, max_length=120)
     service_number: str | None = Field(default=None, max_length=40)
     doctor_id: str | None = None
     doctor_name: str = ""

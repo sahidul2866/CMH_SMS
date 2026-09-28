@@ -74,6 +74,8 @@ def token_payload(name="Rahim Uddin"):
         "waiting_room": "WR-1",
         "source": "walk_in",
         "priority": "normal",
+        "patient_source": "opd",
+        "beneficiary_type": "self",
     }
 
 
