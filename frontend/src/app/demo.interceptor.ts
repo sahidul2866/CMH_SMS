@@ -4,17 +4,17 @@ import { of, throwError } from 'rxjs';
 import { Doctor, QueueToken, WaitingRoom } from './models';
 
 const doctors: Doctor[] = [
-  { id: 'dr-khan', name: 'Dr. Ayesha Khan', department: 'Radiology', room: '205', waitingRoom: 'WR-1' },
-  { id: 'dr-rahman', name: 'Dr. Farhan Rahman', department: 'Radiology', room: '207', waitingRoom: 'WR-1' },
+  { id: 'dr-khan', name: 'Room 205', department: 'Radiology', room: '205', waitingRoom: 'WR-1' },
+  { id: 'dr-rahman', name: 'Room 207', department: 'Radiology', room: '207', waitingRoom: 'WR-1' },
 ];
 const rooms: WaitingRoom[] = [
   { id: 'waiting-room-1', code: 'WR-1', name: 'Radiology Waiting Room', floor: '2nd Floor', display_label: 'Radiology' },
 ];
 const now = new Date().toISOString();
 let tokens: QueueToken[] = [
-  { id: 'demo-1', token_number: 'RD-001', patient_name: 'Md. Rahim Uddin', patient_phone: '01700000001', service_category: 'army', rank: 'Major', service_number: 'BA-10234', doctor_id: 'dr-khan', doctor_name: 'Dr. Ayesha Khan', department: 'Radiology', room_number: '205', waiting_room: 'WR-1', source: 'walk_in', priority: 'normal', status: 'waiting', waiting_minutes: 12, created_at: now, recall_count: 0 },
-  { id: 'demo-2', token_number: 'RD-002', patient_name: 'Nusrat Jahan', patient_phone: '01800000002', service_category: 'dependant', doctor_id: 'dr-khan', doctor_name: 'Dr. Ayesha Khan', department: 'Radiology', room_number: '205', waiting_room: 'WR-1', source: 'walk_in', priority: 'vip', status: 'waiting', waiting_minutes: 7, created_at: now, recall_count: 0 },
-  { id: 'demo-3', token_number: 'RD-003', patient_name: 'Abdul Karim', patient_phone: '01900000003', service_category: 'retired', doctor_id: 'dr-rahman', doctor_name: 'Dr. Farhan Rahman', department: 'Radiology', room_number: '207', waiting_room: 'WR-1', source: 'appointment', priority: 'normal', status: 'called', waiting_minutes: 5, created_at: now, recall_count: 0 },
+  { id: 'demo-1', token_number: 'RD-001', patient_name: 'Md. Rahim Uddin', patient_phone: '01700000001', service_category: 'army', rank: 'Major', service_number: 'BA-10234', doctor_id: 'dr-khan', doctor_name: 'Room 205', department: 'Radiology', room_number: '205', waiting_room: 'WR-1', source: 'walk_in', priority: 'normal', status: 'waiting', waiting_minutes: 12, created_at: now, recall_count: 0 },
+  { id: 'demo-2', token_number: 'RD-002', patient_name: 'Nusrat Jahan', patient_phone: '01800000002', service_category: 'dependant', doctor_id: 'dr-khan', doctor_name: 'Room 205', department: 'Radiology', room_number: '205', waiting_room: 'WR-1', source: 'walk_in', priority: 'vip', status: 'waiting', waiting_minutes: 7, created_at: now, recall_count: 0 },
+  { id: 'demo-3', token_number: 'RD-003', patient_name: 'Abdul Karim', patient_phone: '01900000003', service_category: 'retired', doctor_id: 'dr-rahman', doctor_name: 'Room 207', department: 'Radiology', room_number: '207', waiting_room: 'WR-1', source: 'appointment', priority: 'normal', status: 'called', waiting_minutes: 5, created_at: now, recall_count: 0 },
 ];
 
 const json = (body: unknown, status = 200) => of(new HttpResponse({ body, status }));

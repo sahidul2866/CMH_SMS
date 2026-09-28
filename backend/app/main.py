@@ -633,9 +633,9 @@ def create_user(payload: UserCreate, _: User = Depends(require_permission("users
     if not role:
         raise HTTPException(422, "Assigned role does not exist")
     if role.access_profile == "radiographer" and not payload.doctor_id:
-        raise HTTPException(422, "Radiographer accounts must be assigned to a doctor")
-    if payload.doctor_id and not db.get(Doctor, payload.doctor_id):
-        raise HTTPException(422, "Assigned doctor does not exist")
+        raise HTTPException(422, "Radiographer accounts must be assigned to a room")
+    if payload.doctor_id and not db.scalar(select(Doctor).where(Doctor.id == payload.doctor_id, Doctor.is_active.is_(True))):
+        raise HTTPException(422, "Assigned room does not exist or is inactive")
     user = User(
         username=username,
         full_name=payload.full_name,
@@ -684,9 +684,9 @@ def update_user(
     if not definition:
         raise HTTPException(422, "Assigned role does not exist")
     if definition.access_profile == "radiographer" and not user.doctor_id:
-        raise HTTPException(422, "Radiographer accounts must be assigned to a doctor")
-    if user.doctor_id and not db.get(Doctor, user.doctor_id):
-        raise HTTPException(422, "Assigned doctor does not exist")
+        raise HTTPException(422, "Radiographer accounts must be assigned to a room")
+    if user.doctor_id and not db.scalar(select(Doctor).where(Doctor.id == user.doctor_id, Doctor.is_active.is_(True))):
+        raise HTTPException(422, "Assigned room does not exist or is inactive")
     db.commit()
     db.refresh(user)
     return serialize_user(user, db)
@@ -840,7 +840,12 @@ def create_doctor(payload: DoctorCreate, user: User = Depends(require_permission
         raise HTTPException(409, "Doctor ID already exists")
     if not db.get(WaitingRoom, payload.waiting_room_id):
         raise HTTPException(422, "Waiting room does not exist")
-    doctor = Doctor(**payload.model_dump(), is_active=True)
+    room_number = payload.room_number.strip()
+    if not room_number:
+        raise HTTPException(422, "Room number is required")
+    if db.scalar(select(Doctor).where(Doctor.room_number == room_number, Doctor.is_active.is_(True))):
+        raise HTTPException(409, "Room already has a queue")
+    doctor = Doctor(**{**payload.model_dump(), "room_number": room_number, "name": f"Room {room_number}"}, is_active=True)
     db.add(doctor)
     db.add(AuditEvent(action="doctor.created", actor=user.username, detail={"doctor_id": doctor.id}))
     db.commit()
@@ -868,6 +873,12 @@ def update_doctor(
         return doctor
     if "waiting_room_id" in updates and updates["waiting_room_id"] and not db.get(WaitingRoom, updates["waiting_room_id"]):
         raise HTTPException(422, "Waiting room does not exist")
+    room_number = (updates.get("room_number") or doctor.room_number).strip()
+    if not room_number:
+        raise HTTPException(422, "Room number is required")
+    if db.scalar(select(Doctor).where(Doctor.room_number == room_number, Doctor.id != doctor.id, Doctor.is_active.is_(True))):
+        raise HTTPException(409, "Room already has a queue")
+    updates.update(room_number=room_number, name=f"Room {room_number}")
     for field, value in updates.items():
         if value is not None and field in {"name", "department", "designation", "room_number", "waiting_room_id", "token_prefix"}:
             setattr(doctor, field, value)

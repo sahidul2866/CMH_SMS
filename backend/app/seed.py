@@ -24,12 +24,9 @@ ROOMS = [
     ("waiting-room-3", "WR-3", "Paediatrics Waiting Room", "1st Floor", "Paediatrics"),
     ("waiting-room-4", "WR-4", "Orthopaedics Waiting Room", "4th Floor", "Orthopaedics"),
 ]
-DOCTORS = [
-    ("dr-khan", "SWO Jamil Ahmed", "Medicine", "Consultant", "110", "waiting-room-1", "AK"),
-    ("dr-rahman", "WO Hasanuzzaman", "Cardiology", "Senior Consultant", "116", "waiting-room-2", "FR"),
-    ("dr-sultana", "SST Md. Delwar Hossain", "Paediatrics", "Consultant", "104", "waiting-room-3", "NS"),
-    ("dr-chowdhury", "SNK Azim Uddin", "Orthopaedics", "Senior Consultant", "117", "waiting-room-4", "IC"),
-]
+# Room queues are configured by administrators; never seed named staff.
+DOCTORS = []
+
 PATIENTS = [
     ("Md. Rahim Uddin", "01711000001", "appointment", "normal", "army", "Major", "BA-10234"),
     ("Nusrat Jahan", "01812000002", "walk_in", "priority", "dependant", None, None),

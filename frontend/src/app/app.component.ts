@@ -12,7 +12,7 @@ import { SearchableSelectComponent } from './searchable-select.component';
 import { RealtimeService } from './realtime.service';
 import { RefreshScheduler } from './refresh-scheduler';
 
-const EMPTY_DOCTOR: Doctor = { id: '', name: 'No radiographer configured', department: '—', room: '—', waitingRoom: '' };
+const EMPTY_DOCTOR: Doctor = { id: '', name: 'No room configured', department: '—', room: '—', waitingRoom: '' };
 const TODAY_LOCAL = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const YEAR_START_LOCAL = `${TODAY_LOCAL.slice(0, 4)}-01-01`;
 
@@ -349,7 +349,7 @@ export class AppComponent implements OnDestroy {
     this.releasingDoctorId = person.id;
     this.occupancyError = '';
     this.api.makeAvailable(person.id, person.active_token_ids).subscribe({
-      next: () => { this.releasingDoctorId = ''; this.notify('Active patient completed · Radiographer available'); this.refresh(); },
+      next: () => { this.releasingDoctorId = ''; this.notify('Active patient completed · Room available'); this.refresh(); },
       error: error => { this.releasingDoctorId = ''; this.occupancyError = this.apiErrorMessage(error, 'Could not make radiographer available.'); this.refresh(); },
     });
   }
@@ -368,19 +368,19 @@ export class AppComponent implements OnDestroy {
   }
   saveRadiographer(): void {
     if (this.settingsSaving) return;
-    const name = this.doctorDraft.name.trim();
+    const name = `Room ${this.doctorDraft.room_number.trim()}`;
     const room_number = this.doctorDraft.room_number.trim();
     if (name.length < 2 || name.length > 160 || !room_number || room_number.length > 30) {
-      this.message = 'Enter a radiographer name (2–160 characters) and room number (1–30 characters).';
+      this.message = 'Enter a room number (1–30 characters).';
       return;
     }
     const request = this.doctorEditId
       ? this.api.updateDoctor(this.doctorEditId, {name, room_number})
-      : this.api.createDoctor({...this.doctorDraft, name, room_number});
-    this.trackSettingsSave(request).subscribe({next: () => { this.editor = ''; this.reloadDoctors(); this.notify('Radiographer saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save radiographer.')});
+      : this.api.createDoctor({...this.doctorDraft, name, room_number, token_prefix: this.doctorDraft.id.replaceAll('-', '').slice(0, 8).toUpperCase()});
+    this.trackSettingsSave(request).subscribe({next: () => { this.editor = ''; this.reloadDoctors(); this.notify('Room saved'); }, error: error => this.message = this.apiErrorMessage(error, 'Could not save radiographer.')});
   }
   removeRadiographer(doctor: Doctor): void {
-    this.api.removeDoctor(doctor.id).subscribe({next: () => {this.reloadDoctors(); this.notify('Radiographer removed; historical records retained');}, error: error => this.message = this.apiErrorMessage(error, 'Could not remove radiographer.')});
+    this.api.removeDoctor(doctor.id).subscribe({next: () => {this.reloadDoctors(); this.notify('Room removed; historical records retained');}, error: error => this.message = this.apiErrorMessage(error, 'Could not remove radiographer.')});
   }
   editWaitingPatient(token: QueueToken): void {
     this.clearServiceSearch();
@@ -975,6 +975,10 @@ export class AppComponent implements OnDestroy {
     this.connectRealtime();
   }
 
+  patientRankLabel(token: QueueToken): string {
+    const rank = this.lookupLabel('rank_relationship', token.rank);
+    return rank && (this.classificationCode('beneficiary_type', token.beneficiary_type) === 'family' || token.service_category === 'dependant') ? `Sponsor rank: ${rank}` : rank;
+  }
   get registrationIsFamily(): boolean { return this.classificationCode('beneficiary_type', this.form.beneficiary_type) === 'family'; }
   get isWardSource(): boolean {
     const option = this.lookupOptions.find(item => item.category === 'patient_source' && item.value === this.form.patient_source);

@@ -48,3 +48,30 @@ def test_roster_migration_preserves_ids_accounts_and_custom_rooms():
         assert db.get(Doctor, 'dr-khan').room_number == '205'
         assert db.get(User, 'staff').full_name == 'Dr. Ayesha Khan'
     engine.dispose()
+
+
+def test_room_queue_migration_preserves_staff_assignment():
+    path = Path(__file__).resolve().parents[1] / 'alembic/versions/20260928_0027_room_queues.py'
+    spec = importlib.util.spec_from_file_location('room_migration', path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(WaitingRoom(id='wr', code='WR', name='Waiting', floor='1', display_label='Waiting'))
+        db.flush()
+        db.add(Doctor(id='legacy-id', name='Named radiographer', room_number='110', department='Radiology',
+                      designation='Radiographer', waiting_room_id='wr', token_prefix='MRI'))
+        db.flush()
+        db.add(User(id='staff', username='tech', full_name='Staff member', password_hash='unchanged',
+                    role='radiographer', doctor_id='legacy-id'))
+        db.commit()
+    with engine.begin() as connection:
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            migration.upgrade()
+    with Session(engine) as db:
+        assert db.get(Doctor, 'legacy-id').name == 'Room 110'
+        assert db.get(User, 'staff').doctor_id == 'legacy-id'
+        assert db.get(User, 'staff').full_name == 'Staff member'
+    engine.dispose()

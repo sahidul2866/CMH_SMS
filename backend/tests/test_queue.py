@@ -1603,8 +1603,9 @@ def test_seed_all_roles_is_idempotent_and_hides_internal_settings(monkeypatch):
     seed()
     with SessionLocal() as db:
         users = list(db.scalars(select(User)))
-        assert {user.role for user in users} == {'admin', 'reception', 'radiographer', 'radiography_head', 'auditor', 'display'}
-        assert len([user for user in users if user.role == 'radiographer']) == 4
+        assert {user.role for user in users} == {'admin', 'reception', 'radiography_head', 'auditor', 'display'}
+        assert not [user for user in users if user.role == 'radiographer']
+        assert len(list(db.scalars(select(Doctor)))) == 1  # Only the pre-existing room.
         hashes = {user.username: user.password_hash for user in users}
         assert all(user.must_change_password for user in users if user.username != 'admin')
         db.scalar(select(User).where(User.username == 'reception')).must_change_password = False
@@ -2085,3 +2086,50 @@ def test_service_search_pagination_does_not_hide_additional_patients():
     assert len(first['items']) == 50 and first['has_more'] is True
     assert len(second['items']) == 3 and second['has_more'] is False
     assert len({row['id'] for row in first['items'] + second['items']}) == 53
+
+
+def test_room_directory_uses_room_name_and_rejects_duplicate_room():
+    payload = dict(id='room-206', name='Ignored staff name', department='Radiology',
+                   designation='Room', room_number='206', waiting_room_id='waiting-room-1', token_prefix='R206')
+    response = client.post('/api/v1/admin/doctors', json=payload)
+    assert response.status_code == 201
+    assert response.json()['name'] == 'Room 206'
+    duplicate = client.post('/api/v1/admin/doctors', json={**payload, 'id': 'other-room', 'token_prefix': 'OTHER'})
+    assert duplicate.status_code == 409
+    assert client.patch('/api/v1/admin/doctors/dr-khan', json={'room_number': '206'}).status_code == 409
+
+
+def test_family_announcement_uses_patient_name_without_sponsor_rank(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    engine = AnnouncementEngine()
+    engine.enabled = True
+    engine.cache_dir = tmp_path
+    token = SimpleNamespace(token_number='R-001', patient_name='Nusrat Jahan', patient_name_bn='নুসরাত জাহান',
+                            room_number='206', rank='Major', beneficiary_type='family', service_number=None)
+    assert engine.enqueue(token, {'language': 'both'})
+    item = engine._queue.get_nowait()
+    spoken = []
+    monkeypatch.setattr(engine, '_synthesise', lambda text, *args, **kwargs: spoken.append(text) or tmp_path / 'voice.wav')
+    engine._prepare(item)
+    assert 'Nusrat Jahan, please proceed to room 206.' in spoken
+    assert any('নুসরাত জাহান' in text for text in spoken)
+    assert all('Major' not in text for text in spoken)
+
+
+def test_multiple_radiographers_can_be_assigned_to_the_same_room():
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        db.add(RoleDefinition(name='radiographer', display_name='Radiographer', access_profile='radiographer', permissions=[]))
+        db.commit()
+    for username in ('tech_one', 'tech_two'):
+        response = client.post('/api/v1/users', json=dict(username=username, full_name=username,
+            password='RoomStaff123!', role='radiographer', doctor_id='dr-khan'))
+        assert response.status_code == 201, response.text
+        assert response.json()['doctor_id'] == 'dr-khan'
+    with SessionLocal() as db:
+        room = db.get(Doctor, 'dr-khan')
+        room.is_active = False
+        db.commit()
+    response = client.post('/api/v1/users', json=dict(username='tech_three', full_name='Third tech',
+        password='RoomStaff123!', role='radiographer', doctor_id='dr-khan'))
+    assert response.status_code == 422
