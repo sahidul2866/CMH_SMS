@@ -19,10 +19,10 @@ from .models import (
 )
 
 ROOMS = [
-    ("waiting-room-1", "WR-1", "Medicine Waiting Room", "2nd Floor", "Medicine & General"),
-    ("waiting-room-2", "WR-2", "Cardiology Waiting Room", "3rd Floor", "Cardiology"),
-    ("waiting-room-3", "WR-3", "Paediatrics Waiting Room", "1st Floor", "Paediatrics"),
-    ("waiting-room-4", "WR-4", "Orthopaedics Waiting Room", "4th Floor", "Orthopaedics"),
+    ("waiting-room-1", "WR-1", "Waiting Room 1", "2nd Floor", "Waiting Room 1"),
+    ("waiting-room-2", "WR-2", "Waiting Room 2", "3rd Floor", "Waiting Room 2"),
+    ("waiting-room-3", "WR-3", "Waiting Room 3", "1st Floor", "Waiting Room 3"),
+    ("waiting-room-4", "WR-4", "Waiting Room 4", "4th Floor", "Waiting Room 4"),
 ]
 # Room queues are configured by administrators; never seed named staff.
 DOCTORS = []
@@ -35,12 +35,7 @@ PATIENTS = [
 ]
 LOOKUPS = {
     "patient_source": [("opd", "OPD"), ("ipd", "IPD / Ward"), ("emergency", "Emergency"), ("referral", "Referral"), ("walk_in", "Walk-in"), ("appointment", "Appointment")],
-    "department": [
-        ("medicine", "Medicine"),
-        ("cardiology", "Cardiology"),
-        ("paediatrics", "Paediatrics"),
-        ("orthopaedics", "Orthopaedics"),
-    ],
+    "department": [("radiology", "Radiology")],
     "designation": [
         ("mr", "Mr."),
         ("mrs", "Mrs."),
