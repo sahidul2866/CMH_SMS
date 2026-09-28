@@ -173,6 +173,71 @@ def test_reception_report_filters_and_exports_complete_excel_table():
     assert pdf.content.startswith(b"%PDF")
 
 
+def test_reception_report_contrast_and_patient_type_filters():
+    from app.seed import seed
+    seed()
+    today = date.today().isoformat()
+    # Create tokens for each patient type and contrast setting
+    t_family = client.post("/api/v1/tokens", json={
+        **token_payload("Family Contrast Patient"),
+        "beneficiary_type": "family",
+        "family_relationship": "spouse",
+        "rank": "captain",
+        "contrast": 2,
+    }).json()
+
+    p_re = {**token_payload("RE No Contrast Patient"), "beneficiary_type": "re", "contrast": 0}
+    p_re.pop("rank", None)
+    t_re = client.post("/api/v1/tokens", json=p_re).json()
+
+    p_cne = {**token_payload("CNE Contrast Patient"), "beneficiary_type": "cne", "contrast": 1}
+    p_cne.pop("rank", None)
+    t_cne = client.post("/api/v1/tokens", json=p_cne).json()
+
+    # 1. Filter by contrast=used
+    res = client.get("/api/v1/reports/reception", params={"date_from": today, "date_to": today, "contrast": "used"})
+    assert res.status_code == 200
+    names = [r["patient_name"] for r in res.json()]
+    assert "Family Contrast Patient" in names
+    assert "CNE Contrast Patient" in names
+    assert "RE No Contrast Patient" not in names
+
+    # 2. Filter by contrast=none
+    res_none = client.get("/api/v1/reports/reception", params={"date_from": today, "date_to": today, "contrast": "none"})
+    assert res_none.status_code == 200
+    names_none = [r["patient_name"] for r in res_none.json()]
+    assert "RE No Contrast Patient" in names_none
+    assert "Family Contrast Patient" not in names_none
+
+    # 3. Filter by beneficiary_type=family
+    res_fam = client.get("/api/v1/reports/reception", params={"date_from": today, "date_to": today, "beneficiary_type": "family"})
+    assert res_fam.status_code == 200
+    assert [r["patient_name"] for r in res_fam.json() if r["patient_name"] in {"Family Contrast Patient", "RE No Contrast Patient", "CNE Contrast Patient"}] == ["Family Contrast Patient"]
+
+    # 4. Filter by beneficiary_type=re
+    res_re = client.get("/api/v1/reports/reception", params={"date_from": today, "date_to": today, "beneficiary_type": "re"})
+    assert res_re.status_code == 200
+    assert [r["patient_name"] for r in res_re.json() if r["patient_name"] in {"Family Contrast Patient", "RE No Contrast Patient", "CNE Contrast Patient"}] == ["RE No Contrast Patient"]
+
+    # 5. Filter by beneficiary_type=cne
+    res_cne = client.get("/api/v1/reports/reception", params={"date_from": today, "date_to": today, "beneficiary_type": "cne"})
+    assert res_cne.status_code == 200
+    assert [r["patient_name"] for r in res_cne.json() if r["patient_name"] in {"Family Contrast Patient", "RE No Contrast Patient", "CNE Contrast Patient"}] == ["CNE Contrast Patient"]
+
+    # 6. Combined filter: beneficiary_type=cne and contrast=used
+    combined_excel = client.get("/api/v1/reports/reception.xlsx", params={"date_from": today, "date_to": today, "beneficiary_type": "cne", "contrast": "used"})
+    assert combined_excel.status_code == 200
+    wb = load_workbook(BytesIO(combined_excel.content))
+    sheet = wb["Reception Desk"]
+    found_cne = any(row[4].value == "CNE Contrast Patient" for row in sheet.iter_rows(min_row=2))
+    assert found_cne
+
+    combined_pdf = client.get("/api/v1/reports/reception.pdf", params={"date_from": today, "date_to": today, "beneficiary_type": "cne", "contrast": "used"})
+    assert combined_pdf.status_code == 200
+    assert combined_pdf.content.startswith(b"%PDF")
+
+
+
 def test_seeded_bilingual_setting_is_understood_by_server_audio():
     engine = AnnouncementEngine()
     engine.enabled = True

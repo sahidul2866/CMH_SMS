@@ -210,7 +210,7 @@ export class AppComponent implements OnDestroy {
     });
   }
   receptionReportRows: ReceptionReportRow[] = [];
-  reportFilters = { date_from: YEAR_START_LOCAL, date_to: TODAY_LOCAL, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '' };
+  reportFilters = { date_from: YEAR_START_LOCAL, date_to: TODAY_LOCAL, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '' };
   reportLoading = false;
   reportExporting = false;
   reportPdfExporting = false;
@@ -991,6 +991,39 @@ export class AppComponent implements OnDestroy {
     });
   }
 
+  setReportQuickFilter(type: string, contrast: string): void {
+    this.reportFilters.beneficiary_type = type;
+    this.reportFilters.contrast = contrast;
+    this.loadReceptionReport();
+  }
+
+  get hasActiveReportFilters(): boolean {
+    return Boolean(
+      this.reportFilters.beneficiary_type ||
+      this.reportFilters.contrast ||
+      this.reportFilters.doctor_id ||
+      this.reportFilters.waiting_room ||
+      this.reportFilters.status ||
+      this.reportFilters.priority ||
+      this.reportFilters.service_category
+    );
+  }
+
+  resetReportFilters(): void {
+    this.reportFilters.beneficiary_type = '';
+    this.reportFilters.contrast = '';
+    this.reportFilters.doctor_id = '';
+    this.reportFilters.waiting_room = '';
+    this.reportFilters.status = '';
+    this.reportFilters.priority = '';
+    this.reportFilters.service_category = '';
+    this.loadReceptionReport();
+  }
+
+  doctorRoom(id: string): string {
+    return this.doctors.find(d => d.id === id)?.room || id;
+  }
+
   doctorChanged(): void {
     this.refresh();
     if (this.view === 'display') this.connectRealtime();
@@ -1746,7 +1779,7 @@ export class AppComponent implements OnDestroy {
     this.api.claimPatient(this.selectedDoctorId, token.id).subscribe({ next: updated => { this.actionBusy = false; this.editor = ''; this.notify(`Patient assigned to room ${updated.room_number}`); this.refresh(); }, error: error => { this.actionBusy = false; this.message = this.apiErrorMessage(error, 'Patient is no longer available.'); this.refresh(); } });
   }
   exportTodayReport(): void {
-    this.reportFilters = { date_from: this.registrationDate, date_to: this.registrationDate, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '' };
+    this.reportFilters = { date_from: this.registrationDate, date_to: this.registrationDate, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '' };
     this.loadReceptionReport(); this.exportReceptionReport();
   }
 

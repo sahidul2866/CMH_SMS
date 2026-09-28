@@ -1693,6 +1693,8 @@ def reception_report_query(
     status_filter: str | None,
     priority: str | None,
     service_category: str | None,
+    beneficiary_type: str | None = None,
+    contrast: str | None = None,
 ) -> list[QueueToken]:
     if date_from > date_to:
         raise HTTPException(422, "From date must not be after to date")
@@ -1708,6 +1710,21 @@ def reception_report_query(
     ):
         if value:
             statement = statement.where(field == value)
+    if beneficiary_type:
+        types = [t.strip().lower() for t in beneficiary_type.split(",") if t.strip()]
+        if types:
+            statement = statement.where(
+                or_(
+                    QueueToken.beneficiary_type.in_(types),
+                    QueueToken.entitlement.in_(types),
+                )
+            )
+    if contrast:
+        normalized = contrast.strip().lower()
+        if normalized in {"used", "yes", "true", "1"}:
+            statement = statement.where(QueueToken.contrast.is_not(None), QueueToken.contrast > 0)
+        elif normalized in {"none", "no", "false", "0"}:
+            statement = statement.where(or_(QueueToken.contrast.is_(None), QueueToken.contrast <= 0))
     return list(db.scalars(statement.order_by(QueueToken.token_date.desc(), QueueToken.created_at.desc())))
 
 
@@ -1719,11 +1736,14 @@ def reception_report_params(
     status: str | None = None,
     priority: str | None = None,
     service_category: str | None = None,
+    beneficiary_type: str | None = None,
+    contrast: str | None = None,
 ) -> dict[str, object]:
     return {
         "date_from": date_from, "date_to": date_to, "doctor_id": doctor_id,
         "waiting_room": waiting_room, "status_filter": status,
         "priority": priority, "service_category": service_category,
+        "beneficiary_type": beneficiary_type, "contrast": contrast,
     }
 
 
@@ -1814,30 +1834,47 @@ def reception_report_pdf(
         title="Reception Desk Report", author="CMH Smart Serial",
     )
     styles = getSampleStyleSheet()
-    story = [
-        Paragraph("Reception Desk Report", styles["Title"]),
-        Paragraph(
-            f"Date range: {filters['date_from']} to {filters['date_to']} &nbsp;&nbsp; Records: {len(tokens)}",
-            styles["Normal"],
-        ),
-        Spacer(1, 4 * mm),
-    ]
     labels = {(item.category, item.value): item.label for item in db.scalars(select(LookupOption))}
     def label(category, value):
         return labels.get((category, value), value or "")
-    headers = ["Serial", "Date", "Service No./BA", "Designation", "Name", "Age", "Unit", "MRI area", "Contrast", "Film", "Report", "Patient source", "Priority / Room"]
+
+    filter_notes = []
+    if filters.get("beneficiary_type"):
+        filter_notes.append(f"Type: {label('beneficiary_type', str(filters['beneficiary_type'])).upper() or str(filters['beneficiary_type']).upper()}")
+    if filters.get("contrast") in {"used", "yes", "true", "1"}:
+        filter_notes.append("Contrast: Used")
+    elif filters.get("contrast") in {"none", "no", "false", "0"}:
+        filter_notes.append("Contrast: None")
+    if filters.get("status_filter"):
+        filter_notes.append(f"Status: {str(filters['status_filter']).replace('_', ' ').title()}")
+    if filters.get("priority"):
+        filter_notes.append(f"Priority: {label('priority_category', str(filters['priority']))}")
+    if filters.get("service_category"):
+        filter_notes.append(f"Service: {label('service_category', str(filters['service_category']))}")
+
+    subtitle = f"Date range: {filters['date_from']} to {filters['date_to']} &nbsp;&nbsp; Records: {len(tokens)}"
+    if filter_notes:
+        subtitle += f" &nbsp;&nbsp; Filters: {' · '.join(filter_notes)}"
+
+    story = [
+        Paragraph("Reception Desk Report", styles["Title"]),
+        Paragraph(subtitle, styles["Normal"]),
+        Spacer(1, 4 * mm),
+    ]
+    headers = ["Serial", "Date", "Service No./BA", "Designation", "Type", "Name", "Age", "Unit", "MRI area", "Contrast", "Film", "Report", "Patient source", "Priority / Room"]
     rows = [headers]
     cell_style = styles["BodyText"].clone("RegisterCell")
     cell_style.fontSize = 6.5
     cell_style.leading = 8
     for token in tokens:
+        token_type = label("beneficiary_type", token.beneficiary_type) or label("entitlement", token.entitlement) or "—"
         values = [token.serial_number or token.token_number, str(token.token_date), token.service_number or "",
-            label("rank_relationship", token.rank), token.patient_name, token.age, token.unit or "", token.mri_area or "",
+            label("rank_relationship", token.rank), token_type, token.patient_name, token.age, token.unit or "", token.mri_area or "",
             token.contrast, token.film, token.report or "", " · ".join(filter(None, [label("patient_source", token.patient_source), token.ward_text])),
             f"{label('priority_category', token.priority)} / {token.room_number}"]
         rows.append([Paragraph(escape(str(value)) if value is not None else "", cell_style) for value in values])
     table = LongTable(rows, repeatRows=1, splitInRow=1,
-        colWidths=[18*mm, 17*mm, 21*mm, 23*mm, 28*mm, 9*mm, 19*mm, 25*mm, 12*mm, 9*mm, 44*mm, 21*mm, 23*mm])
+        colWidths=[18*mm, 17*mm, 20*mm, 22*mm, 14*mm, 26*mm, 9*mm, 18*mm, 24*mm, 12*mm, 9*mm, 42*mm, 20*mm, 22*mm])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123C31")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),

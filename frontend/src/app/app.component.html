@@ -249,10 +249,33 @@
       <nav class="settings-tabs" aria-label="Report type"><button type="button" [class.active]="reportTab === 'register'" (click)="reportTab = 'register'">Patient register</button><button type="button" [class.active]="reportTab === 'summary'" (click)="reportTab = 'summary'; loadMonthlySummary()">MRI summary</button></nav>
       <ng-container *ngIf="reportTab === 'register'">
       <div class="intro"><div><span class="eyebrow">Reception desk records</span><h2>Filtered patient register</h2><p>Review matching serials and export the complete reception table.</p></div><div class="report-export-actions"><button class="quiet-button" type="button" (click)="exportTodayReport()" [disabled]="reportExporting">Today’s report</button><button class="export-pdf" type="button" (click)="exportReceptionReportPdf()" [disabled]="reportPdfExporting || reportLoading">{{ reportPdfExporting ? 'Creating PDF…' : 'Export PDF' }}</button><button class="refresh-report" type="button" (click)="exportReceptionReport()" [disabled]="reportExporting || reportLoading">{{ reportExporting ? 'Creating Excel…' : 'Export Excel' }}</button></div></div>
-      <div class="report-filter-summary"><span>{{ reportFilters.date_from | date:'mediumDate' }} – {{ reportFilters.date_to | date:'mediumDate' }}</span><button type="button" class="quiet-button" (click)="editor = 'report-filters'">Filters</button></div>
+      <div class="report-quick-filters">
+        <button type="button" class="quick-filter-btn" [class.active]="!reportFilters.beneficiary_type && !reportFilters.contrast" (click)="setReportQuickFilter('', '')">All</button>
+        <button type="button" class="quick-filter-btn" [class.active]="reportFilters.contrast === 'used'" (click)="setReportQuickFilter(reportFilters.beneficiary_type, reportFilters.contrast === 'used' ? '' : 'used')">Contrast used</button>
+        <button type="button" class="quick-filter-btn" [class.active]="reportFilters.beneficiary_type === 'family'" (click)="setReportQuickFilter(reportFilters.beneficiary_type === 'family' ? '' : 'family', reportFilters.contrast)">Family</button>
+        <button type="button" class="quick-filter-btn" [class.active]="reportFilters.beneficiary_type === 're'" (click)="setReportQuickFilter(reportFilters.beneficiary_type === 're' ? '' : 're', reportFilters.contrast)">RE</button>
+        <button type="button" class="quick-filter-btn" [class.active]="reportFilters.beneficiary_type === 'cne'" (click)="setReportQuickFilter(reportFilters.beneficiary_type === 'cne' ? '' : 'cne', reportFilters.contrast)">CNE</button>
+      </div>
+      <div class="report-filter-summary">
+        <div class="report-filter-tags">
+          <span>{{ reportFilters.date_from | date:'mediumDate' }} – {{ reportFilters.date_to | date:'mediumDate' }}</span>
+          <span class="filter-badge" *ngIf="reportFilters.contrast === 'used'">Contrast: Used</span>
+          <span class="filter-badge" *ngIf="reportFilters.contrast === 'none'">Contrast: None</span>
+          <span class="filter-badge" *ngIf="reportFilters.beneficiary_type">{{ lookupLabel('beneficiary_type', reportFilters.beneficiary_type) || (reportFilters.beneficiary_type | uppercase) }}</span>
+          <span class="filter-badge" *ngIf="reportFilters.doctor_id">Room {{ doctorRoom(reportFilters.doctor_id) }}</span>
+          <span class="filter-badge" *ngIf="reportFilters.status">Status: {{ reportFilters.status.replace('_', ' ') | titlecase }}</span>
+          <span class="filter-badge" *ngIf="reportFilters.priority">Priority: {{ lookupLabel('priority_category', reportFilters.priority) }}</span>
+        </div>
+        <div class="report-filter-buttons">
+          <button type="button" class="quiet-button" *ngIf="hasActiveReportFilters" (click)="resetReportFilters()">Clear filters</button>
+          <button type="button" class="quiet-button" (click)="editor = 'report-filters'">More filters</button>
+        </div>
+      </div>
       <app-modal *ngIf="editor === 'report-filters'" title="Filter reception report" (closed)="editor = ''"><form class="simple-form form-grid" (ngSubmit)="loadReceptionReport(); editor = ''">
         <label>From date<input type="date" [(ngModel)]="reportFilters.date_from" [ngModelOptions]="{standalone: true}"></label>
         <label>To date<input type="date" [(ngModel)]="reportFilters.date_to" [ngModelOptions]="{standalone: true}"></label>
+        <label>Patient type<select [(ngModel)]="reportFilters.beneficiary_type" [ngModelOptions]="{standalone: true}"><option value="">All patient types</option><option value="family">Family</option><option value="re">RE</option><option value="cne">CNE</option><option value="self">Self</option></select></label>
+        <label>Contrast<select [(ngModel)]="reportFilters.contrast" [ngModelOptions]="{standalone: true}"><option value="">All (any contrast)</option><option value="used">Contrast used (> 0)</option><option value="none">No contrast</option></select></label>
         <label>Room number<select [(ngModel)]="reportFilters.doctor_id" [ngModelOptions]="{standalone: true}"><option value="">All rooms</option><option *ngFor="let doctor of doctors" [value]="doctor.id">Room {{ doctor.room }}</option></select></label>
         <label>Waiting room<select [(ngModel)]="reportFilters.waiting_room" [ngModelOptions]="{standalone: true}"><option value="">All waiting rooms</option><option *ngFor="let room of waitingRooms" [value]="room.code">{{ room.code }} — {{ room.name }}</option></select></label>
         <label>Status<select [(ngModel)]="reportFilters.status" [ngModelOptions]="{standalone: true}"><option value="">All statuses</option><option *ngFor="let status of ['waiting','called','recalled','in_progress','completed','skipped','no_show','cancelled']" [value]="status">{{ status.replace('_',' ') | titlecase }}</option></select></label>
@@ -263,8 +286,8 @@
       <section class="panel reception-report-table">
         <div class="report-table-heading"><div><h3>Reception records</h3><p>{{ receptionReportRows.length }} matching {{ receptionReportRows.length === 1 ? 'record' : 'records' }}</p></div><small>Excel includes every patient field and all queue timestamps.</small></div>
         <div class="report-table-scroll">
-          <div class="mri-report-row table-head"><span>Serial</span><span>Date</span><span>Service No./BA</span><span>Designation / Rank</span><span>Name</span><span>Age</span><span>Unit</span><span>MRI area</span><span>Contrast</span><span>Film</span><span>Report</span><span>Patient source</span><span>Priority / Room</span></div>
-          <button type="button" class="mri-report-row" *ngFor="let row of receptionReportRows" (click)="patientDetail = row"><b>{{ row.serial_number || row.token_number }}</b><span>{{ row.token_date | date:'dd/MM/yy' }}</span><span>{{ row.service_number || '—' }}</span><span>{{ lookupLabel('rank_relationship', row.rank) || '—' }}</span><span>{{ row.patient_name }}</span><span>{{ row.age ?? '—' }}</span><span>{{ row.unit || '—' }}</span><span>{{ row.mri_area || '—' }}</span><span>{{ row.contrast ?? '—' }}</span><span>{{ row.film ?? '—' }}</span><span>{{ row.report || '—' }}</span><span>{{ lookupLabel('patient_source', row.patient_source) || '—' }}</span><span>{{ lookupLabel('priority_category', row.priority) }} · {{ row.room_number || 'Unassigned' }}</span></button>
+          <div class="mri-report-row table-head"><span>Serial</span><span>Date</span><span>Service No./BA</span><span>Designation / Rank</span><span>Type</span><span>Name</span><span>Age</span><span>Unit</span><span>MRI area</span><span>Contrast</span><span>Film</span><span>Report</span><span>Patient source</span><span>Priority / Room</span></div>
+          <button type="button" class="mri-report-row" *ngFor="let row of receptionReportRows" (click)="patientDetail = row"><b>{{ row.serial_number || row.token_number }}</b><span>{{ row.token_date | date:'dd/MM/yy' }}</span><span>{{ row.service_number || '—' }}</span><span>{{ lookupLabel('rank_relationship', row.rank) || '—' }}</span><span><span class="patient-type-pill">{{ lookupLabel('beneficiary_type', row.beneficiary_type) || lookupLabel('entitlement', row.entitlement) || '—' }}</span></span><span>{{ row.patient_name }}</span><span>{{ row.age ?? '—' }}</span><span>{{ row.unit || '—' }}</span><span>{{ row.mri_area || '—' }}</span><span>{{ row.contrast ?? '—' }}</span><span>{{ row.film ?? '—' }}</span><span>{{ row.report || '—' }}</span><span>{{ lookupLabel('patient_source', row.patient_source) || '—' }}</span><span>{{ lookupLabel('priority_category', row.priority) }} · {{ row.room_number || 'Unassigned' }}</span></button>
           <p class="empty" *ngIf="!reportLoading && !receptionReportRows.length">No reception records match {{ reportFilters.date_from | date:'mediumDate' }}–{{ reportFilters.date_to | date:'mediumDate' }}. Adjust the date range or other filters, then select Apply filters.</p>
         </div>
       </section>

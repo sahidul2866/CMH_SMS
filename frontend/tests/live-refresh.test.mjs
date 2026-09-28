@@ -238,3 +238,42 @@ test('patient type merges entitlement choices (Self, Family, RE, CNE) with appro
   assert.equal(payload.entitlement, 'cne');
 });
 
+test('reception report filters support date range, contrast used, family, re, and cne', t => {
+  const {app} = fixture(t);
+
+  // Quick filter for contrast used
+  app.setReportQuickFilter('', 'used');
+  assert.equal(app.reportFilters.contrast, 'used');
+  assert.equal(app.hasActiveReportFilters, true);
+  let params = app.receptionReportParams();
+  assert.equal(params.contrast, 'used');
+  assert.equal('beneficiary_type' in params, false);
+
+  // Quick filter for family
+  app.setReportQuickFilter('family', 'used');
+  assert.equal(app.reportFilters.beneficiary_type, 'family');
+  params = app.receptionReportParams();
+  assert.equal(params.beneficiary_type, 'family');
+  assert.equal(params.contrast, 'used');
+
+  // Quick filter for re
+  app.setReportQuickFilter('re', '');
+  assert.equal(app.reportFilters.beneficiary_type, 're');
+  assert.equal(app.reportFilters.contrast, '');
+  params = app.receptionReportParams();
+  assert.equal(params.beneficiary_type, 're');
+  assert.equal('contrast' in params, false);
+
+  // Quick filter for cne
+  app.setReportQuickFilter('cne', '');
+  assert.equal(app.reportFilters.beneficiary_type, 'cne');
+  params = app.receptionReportParams();
+  assert.equal(params.beneficiary_type, 'cne');
+
+  // Reset filters
+  app.resetReportFilters();
+  assert.equal(app.reportFilters.beneficiary_type, '');
+  assert.equal(app.reportFilters.contrast, '');
+  assert.equal(app.hasActiveReportFilters, false);
+});
+
