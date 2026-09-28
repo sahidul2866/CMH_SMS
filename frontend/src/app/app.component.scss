@@ -182,3 +182,9 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 @media (max-width: 600px) { .registration-form .form-grid { grid-template-columns: 1fr; } }
 
 .service-suggestions{border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:14px;background:#f5f8f6}.suggestion-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.service-suggestion-list{max-height:240px;overflow:auto;display:grid;gap:6px}.service-suggestion-list>button{text-align:left;background:white;border:1px solid var(--line);border-radius:6px;padding:10px;color:var(--green);cursor:pointer}.service-suggestion-list strong,.service-suggestion-list small{display:block}.service-suggestion-list button:focus-visible{outline:3px solid #4b8a6e;outline-offset:-3px}
+.bengali-field-group { margin-bottom: 16px; }
+.bengali-field-group label { margin-bottom: 6px !important; }
+.bengali-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+.bengali-actions .quiet-button { padding: 6px 12px; }
+.bengali-status { margin: 0; font-size: 12px; color: var(--muted); }
+

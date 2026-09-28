@@ -100,7 +100,7 @@ export class AppComponent implements OnDestroy {
   classificationCategory = '';
   classificationColumns: ReportCategoryOption[] = [];
   private classificationRequest?: Subscription;
-  readonly classificationKeys = ['beneficiary_type', 'entitlement', 'service_status', 'rank', 'family_relationship'];
+  readonly classificationKeys = ['beneficiary_type', 'service_status', 'rank', 'family_relationship'];
   get disabledClassificationFields(): string[] { return this.classificationKeys.filter(key => !this.fieldEnabled(key)); }
   get selectedClassificationDescription(): string { return this.classificationColumns.find(column => column.key === this.classificationCategory)?.description || 'Needs review keeps this patient in the report total without assigning a category.'; }
   summaryCategoryLabel(category: string | null | undefined): string {
@@ -114,7 +114,7 @@ export class AppComponent implements OnDestroy {
   lookupReportCode = '';
   reportGroups = [{value: 'officer', label: 'Officers / AFNS'}, {value: 'cadet', label: 'Officer / Nursing cadet'}, {value: 'jco', label: 'JCO'}, {value: 'or', label: 'OR / Recruit'}, {value: 'nce', label: 'NCE'}];
   reportCodes: Record<string, {value: string; label: string}[]> = {
-    beneficiary_type: [{value: 'self', label: 'Self'}, {value: 'family', label: 'Family'}],
+    beneficiary_type: [{value: 'self', label: 'Self'}, {value: 'family', label: 'Family'}, {value: 're', label: 'RE'}, {value: 'cne', label: 'CNE'}],
     service_status: [{value: 'serving', label: 'Serving'}, {value: 'retired', label: 'Retired'}],
     entitlement: [{value: 'military', label: 'Military'}, {value: 'civil', label: 'Civil entitled'}, {value: 're', label: 'RE'}, {value: 'cne', label: 'CNE'}],
   };
@@ -124,8 +124,24 @@ export class AppComponent implements OnDestroy {
     return String(item?.metadata_json['report_code'] ?? value ?? '');
   }
   classificationChanged(draft: PatientClassification): void {
-    if (this.classificationCode('beneficiary_type', draft.beneficiary_type) !== 'family') draft.family_relationship = '';
-    if (this.classificationCode('entitlement', draft.entitlement) !== 'military') draft.service_status = '';
+    const bType = this.classificationCode('beneficiary_type', draft.beneficiary_type);
+    if (bType === 'self') {
+      draft.entitlement = 'military';
+      draft.family_relationship = '';
+    } else if (bType === 'family') {
+      draft.entitlement = 'military';
+    } else if (bType === 're') {
+      draft.entitlement = 're';
+      draft.service_status = '';
+      draft.family_relationship = '';
+    } else if (bType === 'cne') {
+      draft.entitlement = 'cne';
+      draft.service_status = '';
+      draft.family_relationship = '';
+    } else {
+      if (this.classificationCode('beneficiary_type', draft.beneficiary_type) !== 'family') draft.family_relationship = '';
+      if (this.classificationCode('entitlement', draft.entitlement) !== 'military') draft.service_status = '';
+    }
   }
   loadMonthlySummary(): void {
     this.summaryLoading = true; this.monthlySummary = null; this.summaryPatients = null;
@@ -155,7 +171,10 @@ export class AppComponent implements OnDestroy {
     this.patientDetail = null; this.classificationTarget = patient; this.classificationError = '';
     this.classificationMode = 'direct';
     this.classificationCategory = patient.summary_category || (patient.summary_category_source === 'manual' ? '__review__' : '');
-    this.classificationDraft = {rank: patient.rank || '', beneficiary_type: patient.beneficiary_type || '', service_status: patient.service_status || '', entitlement: patient.entitlement || '', family_relationship: patient.family_relationship || ''};
+    let bType = patient.beneficiary_type || '';
+    if (!bType && (patient.entitlement === 're' || patient.entitlement === 'cne')) bType = patient.entitlement;
+    this.classificationDraft = {rank: patient.rank || '', beneficiary_type: bType, service_status: patient.service_status || '', entitlement: patient.entitlement || '', family_relationship: patient.family_relationship || ''};
+    this.classificationChanged(this.classificationDraft);
     this.loadClassificationOptions();
   }
   loadClassificationOptions(): void {
@@ -330,12 +349,15 @@ export class AppComponent implements OnDestroy {
   fieldEnabled(key: string): boolean { return this.registrationFieldsLoaded && this.enabledFields.includes(key); }
   fieldRequired(key: string): boolean { return this.fieldEnabled(key) && this.requiredFields.includes(key); }
   fieldApplicable(key: string): boolean {
-    const family = this.classificationCode('beneficiary_type', this.form.beneficiary_type) === 'family';
-    const military = this.classificationCode('entitlement', this.form.entitlement) === 'military';
+    const bType = this.classificationCode('beneficiary_type', this.form.beneficiary_type);
+    const family = bType === 'family';
+    const ent = this.classificationCode('entitlement', this.form.entitlement);
+    const military = ent === 'military' || (bType === 'self' || bType === 'family');
+    if (key === 'entitlement') return false;
     return ({service_status: military, family_relationship: family} as Record<string, boolean>)[key] ?? true;
   }
   enabledPayload<T extends object>(draft: T): T {
-    return Object.fromEntries(Object.entries(draft).filter(([key]) => !(key in this.registrationFields) || this.fieldEnabled(key))) as T;
+    return Object.fromEntries(Object.entries(draft).filter(([key]) => !(key in this.registrationFields) || this.fieldEnabled(key) || key === 'entitlement')) as T;
   }
   customFieldLabel(key: string): string { return this.customFields.find(field => field.key === key)?.label || key; }
   editingPatientId = '';
@@ -391,6 +413,10 @@ export class AppComponent implements OnDestroy {
     for (const key of Object.keys(this.form) as (keyof typeof this.form)[]) {
       (this.form as any)[key] = (token as any)[key] ?? (['age', 'contrast', 'film'].includes(key) ? null : '');
     }
+    if (!this.form.beneficiary_type && (this.form.entitlement === 're' || this.form.entitlement === 'cne')) {
+      this.form.beneficiary_type = this.form.entitlement;
+    }
+    this.classificationChanged(this.form);
     this.registrationSerial = token.serial_number || token.token_number;
     this.registrationServerDate = token.token_date || token.created_at.slice(0, 10);
     this.message = ''; this.showReceptionModal = true;

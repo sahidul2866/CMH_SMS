@@ -74,7 +74,12 @@ def applicable(db, payload, key):
         value = getattr(payload, field, None)
         option = db.scalar(select(LookupOption).where(LookupOption.category == field, LookupOption.value == value)) if value else None
         return (option.metadata_json or {}).get('report_code', value) if option else value
-    family, military = code('beneficiary_type') == 'family', code('entitlement') == 'military'
+    b_type = code('beneficiary_type')
+    ent_code = code('entitlement')
+    family = b_type == 'family'
+    military = (ent_code == 'military' or (b_type in ('self', 'family') and ent_code != 'civil'))
+    if key == 'entitlement':
+        return False
     return {'service_status': military, 'family_relationship': family}.get(key, True)
 
 
@@ -95,12 +100,21 @@ def validate_registration(db, payload, existing=None, check_required=True):
     enabled = set(config['enabled'])
     updates = {}
     for key in FIELDS:
-        if key not in type(payload).model_fields or key in enabled:
+        if key not in type(payload).model_fields or key in enabled or key == 'entitlement':
             continue
         if key in payload.model_fields_set and not blank(getattr(payload, key)):
             raise HTTPException(422, f'{FIELDS[key]} is disabled and cannot accept input')
         updates[key] = getattr(existing, key) if existing else type(payload).model_fields[key].default
     payload = payload.model_copy(update=updates)
+    if hasattr(payload, 'beneficiary_type') and payload.beneficiary_type:
+        from .models import LookupOption
+        from sqlalchemy import select
+        opt = db.scalar(select(LookupOption).where(LookupOption.category == 'beneficiary_type', LookupOption.value == payload.beneficiary_type)) if payload.beneficiary_type else None
+        b_code = (opt.metadata_json or {}).get('report_code', payload.beneficiary_type) if opt else payload.beneficiary_type
+        if hasattr(payload, 'entitlement') and blank(payload.entitlement):
+            inferred = {'self': 'military', 'family': 'military', 're': 're', 'cne': 'cne'}.get(b_code)
+            if inferred:
+                payload = payload.model_copy(update={'entitlement': inferred})
     if hasattr(payload, 'ward_text'):
         payload = payload.model_copy(update={'ward_text': (payload.ward_text or '').strip() or None
                                             if is_ward_source(db, payload.patient_source) else None})

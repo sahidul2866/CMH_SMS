@@ -193,3 +193,48 @@ test('rank stays in the single registration control when switching to family and
   app.form.ward_text = 'Ward 7'; app.form.patient_source = 'opd'; app.patientSourceChanged();
   assert.equal(app.form.ward_text, '');
 });
+
+test('patient type merges entitlement choices (Self, Family, RE, CNE) with appropriate field applicability', t => {
+  const {app} = fixture(t);
+  assert.equal(app.fieldApplicable('entitlement'), false);
+
+  // Self
+  app.form.beneficiary_type = 'self';
+  app.classificationChanged(app.form);
+  assert.equal(app.form.entitlement, 'military');
+  assert.equal(app.fieldApplicable('service_status'), true);
+  assert.equal(app.fieldApplicable('family_relationship'), false);
+
+  // Family
+  app.form.beneficiary_type = 'family';
+  app.form.family_relationship = 'spouse';
+  app.form.service_status = 'serving';
+  app.classificationChanged(app.form);
+  assert.equal(app.form.entitlement, 'military');
+  assert.equal(app.fieldApplicable('service_status'), true);
+  assert.equal(app.fieldApplicable('family_relationship'), true);
+
+  // RE
+  app.form.beneficiary_type = 're';
+  app.classificationChanged(app.form);
+  assert.equal(app.form.entitlement, 're');
+  assert.equal(app.form.service_status, '');
+  assert.equal(app.form.family_relationship, '');
+  assert.equal(app.fieldApplicable('service_status'), false);
+  assert.equal(app.fieldApplicable('family_relationship'), false);
+
+  // CNE
+  app.form.beneficiary_type = 'cne';
+  app.classificationChanged(app.form);
+  assert.equal(app.form.entitlement, 'cne');
+  assert.equal(app.form.service_status, '');
+  assert.equal(app.form.family_relationship, '');
+  assert.equal(app.fieldApplicable('service_status'), false);
+  assert.equal(app.fieldApplicable('family_relationship'), false);
+
+  // enabledPayload includes entitlement even if not a standard registration input
+  const payload = app.enabledPayload(app.form);
+  assert.equal(payload.beneficiary_type, 'cne');
+  assert.equal(payload.entitlement, 'cne');
+});
+
