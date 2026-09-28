@@ -1,0 +1,1144 @@
+{
+  "schema": {
+    "sqlite": [
+      "CREATE TABLE app_settings (\n\t\"key\" VARCHAR(100) NOT NULL, \n\tvalue JSON NOT NULL, \n\tdescription VARCHAR(240) NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (\"key\")\n)",
+      "CREATE TABLE device_endpoints (\n\tid VARCHAR(36) NOT NULL, \n\tname VARCHAR(120) NOT NULL, \n\tdevice_type VARCHAR(20) NOT NULL, \n\twaiting_room VARCHAR(30) NOT NULL, \n\tclient_key_hash VARCHAR(64) NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tlast_heartbeat_at DATETIME, \n\tlast_event_id VARCHAR(36), \n\tlast_acknowledged_event_id VARCHAR(36), \n\tfault VARCHAR(240), \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (client_key_hash)\n)",
+      "CREATE INDEX ix_device_endpoints_device_type ON device_endpoints (device_type)",
+      "CREATE INDEX ix_device_endpoints_waiting_room ON device_endpoints (waiting_room)",
+      "CREATE TABLE holidays (\n\tid VARCHAR(36) NOT NULL, \n\tholiday_date DATE NOT NULL, \n\tname VARCHAR(120) NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)",
+      "CREATE UNIQUE INDEX ix_holidays_holiday_date ON holidays (holiday_date)",
+      "CREATE TABLE lookup_options (\n\tid VARCHAR(36) NOT NULL, \n\tcategory VARCHAR(50) NOT NULL, \n\tvalue VARCHAR(80) NOT NULL, \n\tlabel VARCHAR(120) NOT NULL, \n\tsort_order INTEGER NOT NULL, \n\tmetadata_json JSON NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uq_lookup_category_value UNIQUE (category, value)\n)",
+      "CREATE INDEX ix_lookup_options_category ON lookup_options (category)",
+      "CREATE TABLE patients (\n\tid VARCHAR(36) NOT NULL, \n\tpatient_number VARCHAR(30) NOT NULL, \n\ttitle VARCHAR(30), \n\tname VARCHAR(160) NOT NULL, \n\tmobile VARCHAR(30) NOT NULL, \n\tdate_of_birth DATE, \n\tsex VARCHAR(20), \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)",
+      "CREATE INDEX ix_patients_mobile ON patients (mobile)",
+      "CREATE INDEX ix_patients_name ON patients (name)",
+      "CREATE UNIQUE INDEX ix_patients_patient_number ON patients (patient_number)",
+      "CREATE TABLE registration_counters (\n\tyear INTEGER NOT NULL, \n\tsequence INTEGER NOT NULL, \n\tPRIMARY KEY (year)\n)",
+      "CREATE TABLE role_definitions (\n\tname VARCHAR(30) NOT NULL, \n\tdisplay_name VARCHAR(80) NOT NULL, \n\taccess_profile VARCHAR(30) NOT NULL, \n\tdescription VARCHAR(240) NOT NULL, \n\tpermissions JSON NOT NULL, \n\tis_system BOOLEAN NOT NULL, \n\tPRIMARY KEY (name)\n)",
+      "CREATE INDEX ix_role_definitions_access_profile ON role_definitions (access_profile)",
+      "CREATE TABLE sms_messages (\n\tid VARCHAR(36) NOT NULL, \n\tmobile VARCHAR(30) NOT NULL, \n\tmessage_type VARCHAR(30) NOT NULL, \n\tbody VARCHAR(500) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tprovider_reference VARCHAR(120), \n\terror VARCHAR(500), \n\tattempts INTEGER NOT NULL, \n\tnext_attempt_at DATETIME, \n\tclaimed_at DATETIME, \n\tcreated_at DATETIME NOT NULL, \n\tsent_at DATETIME, \n\tPRIMARY KEY (id)\n)",
+      "CREATE INDEX ix_sms_messages_message_type ON sms_messages (message_type)",
+      "CREATE INDEX ix_sms_messages_mobile ON sms_messages (mobile)",
+      "CREATE INDEX ix_sms_messages_next_attempt_at ON sms_messages (next_attempt_at)",
+      "CREATE INDEX ix_sms_messages_status ON sms_messages (status)",
+      "CREATE TABLE waiting_rooms (\n\tid VARCHAR(36) NOT NULL, \n\tcode VARCHAR(30) NOT NULL, \n\tname VARCHAR(120) NOT NULL, \n\tfloor VARCHAR(40) NOT NULL, \n\tdisplay_label VARCHAR(120) NOT NULL, \n\taudio_enabled BOOLEAN NOT NULL, \n\tdisplay_enabled BOOLEAN NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tPRIMARY KEY (id)\n)",
+      "CREATE UNIQUE INDEX ix_waiting_rooms_code ON waiting_rooms (code)",
+      "CREATE TABLE doctors (\n\tid VARCHAR(60) NOT NULL, \n\tname VARCHAR(160) NOT NULL, \n\tdepartment VARCHAR(120) NOT NULL, \n\tdesignation VARCHAR(120) NOT NULL, \n\troom_number VARCHAR(30) NOT NULL, \n\twaiting_room_id VARCHAR(36) NOT NULL, \n\ttoken_prefix VARCHAR(8) NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(waiting_room_id) REFERENCES waiting_rooms (id), \n\tUNIQUE (token_prefix)\n)",
+      "CREATE INDEX ix_doctors_waiting_room_id ON doctors (waiting_room_id)",
+      "CREATE TABLE queue_controls (\n\tdoctor_id VARCHAR(60) NOT NULL, \n\tis_paused BOOLEAN NOT NULL, \n\treason VARCHAR(240), \n\tupdated_by VARCHAR(120) NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (doctor_id), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id)\n)",
+      "CREATE TABLE schedule_slots (\n\tid VARCHAR(36) NOT NULL, \n\tdoctor_id VARCHAR(60) NOT NULL, \n\tstarts_at DATETIME NOT NULL, \n\tends_at DATETIME NOT NULL, \n\tcapacity INTEGER NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uq_doctor_slot_start UNIQUE (doctor_id, starts_at), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id)\n)",
+      "CREATE INDEX ix_schedule_slots_doctor_id ON schedule_slots (doctor_id)",
+      "CREATE INDEX ix_schedule_slots_starts_at ON schedule_slots (starts_at)",
+      "CREATE TABLE users (\n\tid VARCHAR(36) NOT NULL, \n\tusername VARCHAR(80) NOT NULL, \n\tfull_name VARCHAR(160) NOT NULL, \n\tpassword_hash VARCHAR(300) NOT NULL, \n\tmust_change_password BOOLEAN DEFAULT '0' NOT NULL, \n\trole VARCHAR(30) NOT NULL, \n\tdoctor_id VARCHAR(60), \n\tis_active BOOLEAN NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id)\n)",
+      "CREATE INDEX ix_users_doctor_id ON users (doctor_id)",
+      "CREATE INDEX ix_users_role ON users (role)",
+      "CREATE UNIQUE INDEX ix_users_username ON users (username)",
+      "CREATE TABLE appointments (\n\tid VARCHAR(36) NOT NULL, \n\tappointment_number VARCHAR(30) NOT NULL, \n\tpatient_id VARCHAR(36) NOT NULL, \n\tdoctor_id VARCHAR(60) NOT NULL, \n\tslot_id VARCHAR(36) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\treason VARCHAR(240), \n\tnotes TEXT, \n\tcreated_by VARCHAR(120) NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tchecked_in_at DATETIME, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(patient_id) REFERENCES patients (id), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id), \n\tFOREIGN KEY(slot_id) REFERENCES schedule_slots (id)\n)",
+      "CREATE UNIQUE INDEX ix_appointments_appointment_number ON appointments (appointment_number)",
+      "CREATE INDEX ix_appointments_doctor_id ON appointments (doctor_id)",
+      "CREATE INDEX ix_appointments_patient_id ON appointments (patient_id)",
+      "CREATE INDEX ix_appointments_slot_id ON appointments (slot_id)",
+      "CREATE INDEX ix_appointments_status ON appointments (status)",
+      "CREATE TABLE user_sessions (\n\tid VARCHAR(64) NOT NULL, \n\tuser_id VARCHAR(36) NOT NULL, \n\texpires_at DATETIME NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)",
+      "CREATE INDEX ix_user_sessions_expires_at ON user_sessions (expires_at)",
+      "CREATE INDEX ix_user_sessions_user_id ON user_sessions (user_id)",
+      "CREATE TABLE queue_tokens (\n\tcustom_fields JSON DEFAULT '{}' NOT NULL, \n\tid VARCHAR(36) NOT NULL, \n\ttoken_date DATE NOT NULL, \n\tsequence INTEGER NOT NULL, \n\ttoken_number VARCHAR(20) NOT NULL, \n\tserial_number VARCHAR(30), \n\tage INTEGER, \n\tunit VARCHAR(160), \n\tmri_area VARCHAR(240), \n\tcontrast INTEGER, \n\tfilm INTEGER, \n\treport TEXT, \n\tbeneficiary_type VARCHAR(100), \n\tservice_status VARCHAR(100), \n\tentitlement VARCHAR(100), \n\tfamily_relationship VARCHAR(100), \n\tsummary_category VARCHAR(100), \n\tsummary_category_source VARCHAR(20) DEFAULT 'automatic' NOT NULL, \n\tpatient_source VARCHAR(100), \n\tward_text VARCHAR(240), \n\tpatient_title VARCHAR(30), \n\tpatient_name VARCHAR(160) NOT NULL, \n\tpatient_name_bn VARCHAR(480), \n\tpatient_phone VARCHAR(30) NOT NULL, \n\tservice_category VARCHAR(30) NOT NULL, \n\trank VARCHAR(100), \n\tservice_number VARCHAR(40), \n\tdoctor_id VARCHAR(60), \n\tdoctor_name VARCHAR(160) NOT NULL, \n\tdepartment VARCHAR(120) NOT NULL, \n\troom_number VARCHAR(30) NOT NULL, \n\twaiting_room VARCHAR(30) NOT NULL, \n\tsource VARCHAR(20) NOT NULL, \n\tpriority VARCHAR(20) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tcalled_at DATETIME, \n\tcompleted_at DATETIME, \n\tstarted_at DATETIME, \n\tskipped_at DATETIME, \n\trecalled_at DATETIME, \n\tno_show_at DATETIME, \n\tcancelled_at DATETIME, \n\trecall_count INTEGER NOT NULL, \n\tpatient_id VARCHAR(36), \n\tappointment_id VARCHAR(36), \n\tscheduled_at DATETIME, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uq_daily_doctor_sequence UNIQUE (token_date, doctor_id, sequence), \n\tUNIQUE (serial_number), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id), \n\tFOREIGN KEY(patient_id) REFERENCES patients (id), \n\tFOREIGN KEY(appointment_id) REFERENCES appointments (id)\n)",
+      "CREATE UNIQUE INDEX ix_queue_tokens_appointment_id ON queue_tokens (appointment_id)",
+      "CREATE INDEX ix_queue_tokens_doctor_id ON queue_tokens (doctor_id)",
+      "CREATE INDEX ix_queue_tokens_patient_id ON queue_tokens (patient_id)",
+      "CREATE INDEX ix_queue_tokens_service_number ON queue_tokens (service_number)",
+      "CREATE INDEX ix_queue_tokens_status ON queue_tokens (status)",
+      "CREATE INDEX ix_queue_tokens_token_date ON queue_tokens (token_date)",
+      "CREATE INDEX ix_queue_tokens_token_number ON queue_tokens (token_number)",
+      "CREATE INDEX ix_queue_tokens_waiting_room ON queue_tokens (waiting_room)",
+      "CREATE TABLE audit_events (\n\tid VARCHAR(36) NOT NULL, \n\taction VARCHAR(80) NOT NULL, \n\tactor VARCHAR(120) NOT NULL, \n\ttoken_id VARCHAR(36), \n\tprevious_status VARCHAR(20), \n\tnew_status VARCHAR(20), \n\treason TEXT, \n\tdetail JSON NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(token_id) REFERENCES queue_tokens (id)\n)",
+      "CREATE INDEX ix_audit_events_action ON audit_events (action)",
+      "CREATE INDEX ix_audit_events_created_at ON audit_events (created_at)",
+      "CREATE INDEX ix_audit_events_token_id ON audit_events (token_id)",
+      "CREATE TABLE call_events (\n\tid VARCHAR(36) NOT NULL, \n\ttoken_id VARCHAR(36) NOT NULL, \n\taction VARCHAR(20) NOT NULL, \n\twaiting_room VARCHAR(30) NOT NULL, \n\tpayload JSON NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(token_id) REFERENCES queue_tokens (id)\n)",
+      "CREATE INDEX ix_call_events_created_at ON call_events (created_at)",
+      "CREATE INDEX ix_call_events_token_id ON call_events (token_id)",
+      "CREATE INDEX ix_call_events_waiting_room ON call_events (waiting_room)"
+    ],
+    "postgresql": [
+      "CREATE TABLE app_settings (\n\tkey VARCHAR(100) NOT NULL, \n\tvalue JSON NOT NULL, \n\tdescription VARCHAR(240) NOT NULL, \n\tupdated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (key)\n)",
+      "CREATE TABLE device_endpoints (\n\tid VARCHAR(36) NOT NULL, \n\tname VARCHAR(120) NOT NULL, \n\tdevice_type VARCHAR(20) NOT NULL, \n\twaiting_room VARCHAR(30) NOT NULL, \n\tclient_key_hash VARCHAR(64) NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tlast_heartbeat_at TIMESTAMP WITHOUT TIME ZONE, \n\tlast_event_id VARCHAR(36), \n\tlast_acknowledged_event_id VARCHAR(36), \n\tfault VARCHAR(240), \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (client_key_hash)\n)",
+      "CREATE INDEX ix_device_endpoints_device_type ON device_endpoints (device_type)",
+      "CREATE INDEX ix_device_endpoints_waiting_room ON device_endpoints (waiting_room)",
+      "CREATE TABLE holidays (\n\tid VARCHAR(36) NOT NULL, \n\tholiday_date DATE NOT NULL, \n\tname VARCHAR(120) NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id)\n)",
+      "CREATE UNIQUE INDEX ix_holidays_holiday_date ON holidays (holiday_date)",
+      "CREATE TABLE lookup_options (\n\tid VARCHAR(36) NOT NULL, \n\tcategory VARCHAR(50) NOT NULL, \n\tvalue VARCHAR(80) NOT NULL, \n\tlabel VARCHAR(120) NOT NULL, \n\tsort_order INTEGER NOT NULL, \n\tmetadata_json JSON NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tupdated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uq_lookup_category_value UNIQUE (category, value)\n)",
+      "CREATE INDEX ix_lookup_options_category ON lookup_options (category)",
+      "CREATE TABLE patients (\n\tid VARCHAR(36) NOT NULL, \n\tpatient_number VARCHAR(30) NOT NULL, \n\ttitle VARCHAR(30), \n\tname VARCHAR(160) NOT NULL, \n\tmobile VARCHAR(30) NOT NULL, \n\tdate_of_birth DATE, \n\tsex VARCHAR(20), \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id)\n)",
+      "CREATE INDEX ix_patients_mobile ON patients (mobile)",
+      "CREATE INDEX ix_patients_name ON patients (name)",
+      "CREATE UNIQUE INDEX ix_patients_patient_number ON patients (patient_number)",
+      "CREATE TABLE registration_counters (\n\tyear SERIAL NOT NULL, \n\tsequence INTEGER NOT NULL, \n\tPRIMARY KEY (year)\n)",
+      "CREATE TABLE role_definitions (\n\tname VARCHAR(30) NOT NULL, \n\tdisplay_name VARCHAR(80) NOT NULL, \n\taccess_profile VARCHAR(30) NOT NULL, \n\tdescription VARCHAR(240) NOT NULL, \n\tpermissions JSON NOT NULL, \n\tis_system BOOLEAN NOT NULL, \n\tPRIMARY KEY (name)\n)",
+      "CREATE INDEX ix_role_definitions_access_profile ON role_definitions (access_profile)",
+      "CREATE TABLE sms_messages (\n\tid VARCHAR(36) NOT NULL, \n\tmobile VARCHAR(30) NOT NULL, \n\tmessage_type VARCHAR(30) NOT NULL, \n\tbody VARCHAR(500) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tprovider_reference VARCHAR(120), \n\terror VARCHAR(500), \n\tattempts INTEGER NOT NULL, \n\tnext_attempt_at TIMESTAMP WITHOUT TIME ZONE, \n\tclaimed_at TIMESTAMP WITHOUT TIME ZONE, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tsent_at TIMESTAMP WITHOUT TIME ZONE, \n\tPRIMARY KEY (id)\n)",
+      "CREATE INDEX ix_sms_messages_message_type ON sms_messages (message_type)",
+      "CREATE INDEX ix_sms_messages_mobile ON sms_messages (mobile)",
+      "CREATE INDEX ix_sms_messages_next_attempt_at ON sms_messages (next_attempt_at)",
+      "CREATE INDEX ix_sms_messages_status ON sms_messages (status)",
+      "CREATE TABLE waiting_rooms (\n\tid VARCHAR(36) NOT NULL, \n\tcode VARCHAR(30) NOT NULL, \n\tname VARCHAR(120) NOT NULL, \n\tfloor VARCHAR(40) NOT NULL, \n\tdisplay_label VARCHAR(120) NOT NULL, \n\taudio_enabled BOOLEAN NOT NULL, \n\tdisplay_enabled BOOLEAN NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tPRIMARY KEY (id)\n)",
+      "CREATE UNIQUE INDEX ix_waiting_rooms_code ON waiting_rooms (code)",
+      "CREATE TABLE doctors (\n\tid VARCHAR(60) NOT NULL, \n\tname VARCHAR(160) NOT NULL, \n\tdepartment VARCHAR(120) NOT NULL, \n\tdesignation VARCHAR(120) NOT NULL, \n\troom_number VARCHAR(30) NOT NULL, \n\twaiting_room_id VARCHAR(36) NOT NULL, \n\ttoken_prefix VARCHAR(8) NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(waiting_room_id) REFERENCES waiting_rooms (id), \n\tUNIQUE (token_prefix)\n)",
+      "CREATE INDEX ix_doctors_waiting_room_id ON doctors (waiting_room_id)",
+      "CREATE TABLE queue_controls (\n\tdoctor_id VARCHAR(60) NOT NULL, \n\tis_paused BOOLEAN NOT NULL, \n\treason VARCHAR(240), \n\tupdated_by VARCHAR(120) NOT NULL, \n\tupdated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (doctor_id), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id)\n)",
+      "CREATE TABLE schedule_slots (\n\tid VARCHAR(36) NOT NULL, \n\tdoctor_id VARCHAR(60) NOT NULL, \n\tstarts_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tends_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tcapacity INTEGER NOT NULL, \n\tis_active BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uq_doctor_slot_start UNIQUE (doctor_id, starts_at), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id)\n)",
+      "CREATE INDEX ix_schedule_slots_doctor_id ON schedule_slots (doctor_id)",
+      "CREATE INDEX ix_schedule_slots_starts_at ON schedule_slots (starts_at)",
+      "CREATE TABLE users (\n\tid VARCHAR(36) NOT NULL, \n\tusername VARCHAR(80) NOT NULL, \n\tfull_name VARCHAR(160) NOT NULL, \n\tpassword_hash VARCHAR(300) NOT NULL, \n\tmust_change_password BOOLEAN DEFAULT '0' NOT NULL, \n\trole VARCHAR(30) NOT NULL, \n\tdoctor_id VARCHAR(60), \n\tis_active BOOLEAN NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id)\n)",
+      "CREATE INDEX ix_users_doctor_id ON users (doctor_id)",
+      "CREATE INDEX ix_users_role ON users (role)",
+      "CREATE UNIQUE INDEX ix_users_username ON users (username)",
+      "CREATE TABLE appointments (\n\tid VARCHAR(36) NOT NULL, \n\tappointment_number VARCHAR(30) NOT NULL, \n\tpatient_id VARCHAR(36) NOT NULL, \n\tdoctor_id VARCHAR(60) NOT NULL, \n\tslot_id VARCHAR(36) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\treason VARCHAR(240), \n\tnotes TEXT, \n\tcreated_by VARCHAR(120) NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tupdated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tchecked_in_at TIMESTAMP WITHOUT TIME ZONE, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(patient_id) REFERENCES patients (id), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id), \n\tFOREIGN KEY(slot_id) REFERENCES schedule_slots (id)\n)",
+      "CREATE UNIQUE INDEX ix_appointments_appointment_number ON appointments (appointment_number)",
+      "CREATE INDEX ix_appointments_doctor_id ON appointments (doctor_id)",
+      "CREATE INDEX ix_appointments_patient_id ON appointments (patient_id)",
+      "CREATE INDEX ix_appointments_slot_id ON appointments (slot_id)",
+      "CREATE INDEX ix_appointments_status ON appointments (status)",
+      "CREATE TABLE user_sessions (\n\tid VARCHAR(64) NOT NULL, \n\tuser_id VARCHAR(36) NOT NULL, \n\texpires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)",
+      "CREATE INDEX ix_user_sessions_expires_at ON user_sessions (expires_at)",
+      "CREATE INDEX ix_user_sessions_user_id ON user_sessions (user_id)",
+      "CREATE TABLE queue_tokens (\n\tcustom_fields JSONB DEFAULT '{}' NOT NULL, \n\tid VARCHAR(36) NOT NULL, \n\ttoken_date DATE NOT NULL, \n\tsequence INTEGER NOT NULL, \n\ttoken_number VARCHAR(20) NOT NULL, \n\tserial_number VARCHAR(30), \n\tage INTEGER, \n\tunit VARCHAR(160), \n\tmri_area VARCHAR(240), \n\tcontrast INTEGER, \n\tfilm INTEGER, \n\treport TEXT, \n\tbeneficiary_type VARCHAR(100), \n\tservice_status VARCHAR(100), \n\tentitlement VARCHAR(100), \n\tfamily_relationship VARCHAR(100), \n\tsummary_category VARCHAR(100), \n\tsummary_category_source VARCHAR(20) DEFAULT 'automatic' NOT NULL, \n\tpatient_source VARCHAR(100), \n\tward_text VARCHAR(240), \n\tpatient_title VARCHAR(30), \n\tpatient_name VARCHAR(160) NOT NULL, \n\tpatient_name_bn VARCHAR(480), \n\tpatient_phone VARCHAR(30) NOT NULL, \n\tservice_category VARCHAR(30) NOT NULL, \n\trank VARCHAR(100), \n\tservice_number VARCHAR(40), \n\tdoctor_id VARCHAR(60), \n\tdoctor_name VARCHAR(160) NOT NULL, \n\tdepartment VARCHAR(120) NOT NULL, \n\troom_number VARCHAR(30) NOT NULL, \n\twaiting_room VARCHAR(30) NOT NULL, \n\tsource VARCHAR(20) NOT NULL, \n\tpriority VARCHAR(20) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tcalled_at TIMESTAMP WITHOUT TIME ZONE, \n\tcompleted_at TIMESTAMP WITHOUT TIME ZONE, \n\tstarted_at TIMESTAMP WITHOUT TIME ZONE, \n\tskipped_at TIMESTAMP WITHOUT TIME ZONE, \n\trecalled_at TIMESTAMP WITHOUT TIME ZONE, \n\tno_show_at TIMESTAMP WITHOUT TIME ZONE, \n\tcancelled_at TIMESTAMP WITHOUT TIME ZONE, \n\trecall_count INTEGER NOT NULL, \n\tpatient_id VARCHAR(36), \n\tappointment_id VARCHAR(36), \n\tscheduled_at TIMESTAMP WITHOUT TIME ZONE, \n\tPRIMARY KEY (id), \n\tCONSTRAINT uq_daily_doctor_sequence UNIQUE (token_date, doctor_id, sequence), \n\tUNIQUE (serial_number), \n\tFOREIGN KEY(doctor_id) REFERENCES doctors (id), \n\tFOREIGN KEY(patient_id) REFERENCES patients (id), \n\tFOREIGN KEY(appointment_id) REFERENCES appointments (id)\n)",
+      "CREATE UNIQUE INDEX ix_queue_tokens_appointment_id ON queue_tokens (appointment_id)",
+      "CREATE INDEX ix_queue_tokens_doctor_id ON queue_tokens (doctor_id)",
+      "CREATE INDEX ix_queue_tokens_patient_id ON queue_tokens (patient_id)",
+      "CREATE INDEX ix_queue_tokens_service_number ON queue_tokens (service_number)",
+      "CREATE INDEX ix_queue_tokens_status ON queue_tokens (status)",
+      "CREATE INDEX ix_queue_tokens_token_date ON queue_tokens (token_date)",
+      "CREATE INDEX ix_queue_tokens_token_number ON queue_tokens (token_number)",
+      "CREATE INDEX ix_queue_tokens_waiting_room ON queue_tokens (waiting_room)",
+      "CREATE TABLE audit_events (\n\tid VARCHAR(36) NOT NULL, \n\taction VARCHAR(80) NOT NULL, \n\tactor VARCHAR(120) NOT NULL, \n\ttoken_id VARCHAR(36), \n\tprevious_status VARCHAR(20), \n\tnew_status VARCHAR(20), \n\treason TEXT, \n\tdetail JSON NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(token_id) REFERENCES queue_tokens (id)\n)",
+      "CREATE INDEX ix_audit_events_action ON audit_events (action)",
+      "CREATE INDEX ix_audit_events_created_at ON audit_events (created_at)",
+      "CREATE INDEX ix_audit_events_token_id ON audit_events (token_id)",
+      "CREATE TABLE call_events (\n\tid VARCHAR(36) NOT NULL, \n\ttoken_id VARCHAR(36) NOT NULL, \n\taction VARCHAR(20) NOT NULL, \n\twaiting_room VARCHAR(30) NOT NULL, \n\tpayload JSON NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(token_id) REFERENCES queue_tokens (id)\n)",
+      "CREATE INDEX ix_call_events_created_at ON call_events (created_at)",
+      "CREATE INDEX ix_call_events_token_id ON call_events (token_id)",
+      "CREATE INDEX ix_call_events_waiting_room ON call_events (waiting_room)"
+    ]
+  },
+  "rooms": [
+    {
+      "id": "room-110",
+      "name": "Room 110",
+      "room_number": "110",
+      "department": "Radiology",
+      "designation": "Room",
+      "waiting_room_id": "waiting-room-1",
+      "token_prefix": "R110",
+      "is_active": true
+    },
+    {
+      "id": "room-104",
+      "name": "Room 104",
+      "room_number": "104",
+      "department": "Radiology",
+      "designation": "Room",
+      "waiting_room_id": "waiting-room-2",
+      "token_prefix": "R104",
+      "is_active": true
+    },
+    {
+      "id": "room-116",
+      "name": "Room 116",
+      "room_number": "116",
+      "department": "Radiology",
+      "designation": "Room",
+      "waiting_room_id": "waiting-room-3",
+      "token_prefix": "R116",
+      "is_active": true
+    },
+    {
+      "id": "room-117",
+      "name": "Room 117",
+      "room_number": "117",
+      "department": "Radiology",
+      "designation": "Room",
+      "waiting_room_id": "waiting-room-4",
+      "token_prefix": "R117",
+      "is_active": true
+    }
+  ],
+  "waiting_rooms": [
+    {
+      "id": "waiting-room-1",
+      "code": "WR-1",
+      "name": "Waiting Room 1",
+      "floor": "2nd Floor",
+      "display_label": "Waiting Room 1",
+      "audio_enabled": true,
+      "display_enabled": true,
+      "is_active": true
+    },
+    {
+      "id": "waiting-room-2",
+      "code": "WR-2",
+      "name": "Waiting Room 2",
+      "floor": "3rd Floor",
+      "display_label": "Waiting Room 2",
+      "audio_enabled": true,
+      "display_enabled": true,
+      "is_active": true
+    },
+    {
+      "id": "waiting-room-3",
+      "code": "WR-3",
+      "name": "Waiting Room 3",
+      "floor": "1st Floor",
+      "display_label": "Waiting Room 3",
+      "audio_enabled": true,
+      "display_enabled": true,
+      "is_active": true
+    },
+    {
+      "id": "waiting-room-4",
+      "code": "WR-4",
+      "name": "Waiting Room 4",
+      "floor": "4th Floor",
+      "display_label": "Waiting Room 4",
+      "audio_enabled": true,
+      "display_enabled": true,
+      "is_active": true
+    }
+  ],
+  "roles": [
+    {
+      "name": "admin",
+      "display_name": "Admin",
+      "access_profile": "admin",
+      "permissions": [
+        "*"
+      ],
+      "description": "Built-in role",
+      "is_system": true
+    },
+    {
+      "name": "reception",
+      "display_name": "Reception",
+      "access_profile": "reception",
+      "permissions": [
+        "appointments.check_in",
+        "appointments.manage",
+        "appointments.view",
+        "directory.view",
+        "display.view",
+        "master_data.view",
+        "pages.appointments",
+        "pages.display",
+        "pages.reception",
+        "patients.manage",
+        "patients.view",
+        "queue.print",
+        "queue.priority",
+        "queue.serial.create",
+        "queue.transfer",
+        "queue.view",
+        "schedule.view"
+      ],
+      "description": "Built-in role",
+      "is_system": true
+    },
+    {
+      "name": "radiographer",
+      "display_name": "Radiographer",
+      "access_profile": "radiographer",
+      "permissions": [
+        "audio.announce",
+        "dashboard.view",
+        "directory.view",
+        "master_data.view",
+        "pages.dashboard",
+        "pages.radiographer",
+        "pages.reception",
+        "queue.action",
+        "queue.call",
+        "queue.pause",
+        "queue.serial.create",
+        "queue.supplies.update",
+        "queue.view"
+      ],
+      "description": "Built-in role",
+      "is_system": true
+    },
+    {
+      "name": "radiography_head",
+      "display_name": "Radiography Head",
+      "access_profile": "auditor",
+      "permissions": [
+        "dashboard.view",
+        "directory.view",
+        "master_data.view",
+        "pages.dashboard",
+        "pages.radiographer",
+        "pages.reports",
+        "queue.view",
+        "reports.view"
+      ],
+      "description": "Built-in role",
+      "is_system": true
+    },
+    {
+      "name": "auditor",
+      "display_name": "Auditor",
+      "access_profile": "auditor",
+      "permissions": [
+        "dashboard.view",
+        "pages.dashboard",
+        "pages.reports",
+        "reports.view"
+      ],
+      "description": "Built-in role",
+      "is_system": true
+    },
+    {
+      "name": "display",
+      "display_name": "Display",
+      "access_profile": "display",
+      "permissions": [
+        "directory.view",
+        "display.view",
+        "pages.display"
+      ],
+      "description": "Built-in role",
+      "is_system": true
+    }
+  ],
+  "lookups": [
+    {
+      "category": "patient_source",
+      "value": "opd",
+      "label": "OPD",
+      "sort_order": 0,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "patient_source",
+      "value": "ipd",
+      "label": "IPD / Ward",
+      "sort_order": 1,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "patient_source",
+      "value": "emergency",
+      "label": "Emergency",
+      "sort_order": 2,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "patient_source",
+      "value": "referral",
+      "label": "Referral",
+      "sort_order": 3,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "patient_source",
+      "value": "walk_in",
+      "label": "Walk-in",
+      "sort_order": 4,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "patient_source",
+      "value": "appointment",
+      "label": "Appointment",
+      "sort_order": 5,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "department",
+      "value": "radiology",
+      "label": "Radiology",
+      "sort_order": 0,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "designation",
+      "value": "mr",
+      "label": "Mr.",
+      "sort_order": 0,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "designation",
+      "value": "mrs",
+      "label": "Mrs.",
+      "sort_order": 1,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "designation",
+      "value": "ms",
+      "label": "Ms.",
+      "sort_order": 2,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "designation",
+      "value": "miss",
+      "label": "Miss",
+      "sort_order": 3,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "designation",
+      "value": "master",
+      "label": "Master",
+      "sort_order": 4,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "designation",
+      "value": "dr",
+      "label": "Dr.",
+      "sort_order": 5,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "room_number",
+      "value": "110",
+      "label": "Room 110",
+      "sort_order": 0,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "room_number",
+      "value": "104",
+      "label": "Room 104",
+      "sort_order": 1,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "room_number",
+      "value": "116",
+      "label": "Room 116",
+      "sort_order": 2,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "room_number",
+      "value": "117",
+      "label": "Room 117",
+      "sort_order": 3,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "sex",
+      "value": "male",
+      "label": "Male",
+      "sort_order": 0,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "sex",
+      "value": "female",
+      "label": "Female",
+      "sort_order": 1,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "sex",
+      "value": "other",
+      "label": "Other",
+      "sort_order": 2,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "service_category",
+      "value": "army",
+      "label": "Bangladesh Army",
+      "sort_order": 0,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "service_category",
+      "value": "navy",
+      "label": "Bangladesh Navy",
+      "sort_order": 1,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "service_category",
+      "value": "air_force",
+      "label": "Bangladesh Air Force",
+      "sort_order": 2,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "service_category",
+      "value": "retired",
+      "label": "Retired service",
+      "sort_order": 3,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "service_category",
+      "value": "dependant",
+      "label": "Service dependant",
+      "sort_order": 4,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "service_category",
+      "value": "civilian",
+      "label": "Civilian",
+      "sort_order": 5,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "brigadier_general",
+      "label": "Brigadier General",
+      "sort_order": 0,
+      "metadata_json": {
+        "report_group": "officer",
+        "priority": "vip"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "colonel",
+      "label": "Colonel",
+      "sort_order": 1,
+      "metadata_json": {
+        "report_group": "officer"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "lieutenant_colonel",
+      "label": "Lieutenant Colonel",
+      "sort_order": 2,
+      "metadata_json": {
+        "report_group": "officer"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "major",
+      "label": "Major",
+      "sort_order": 3,
+      "metadata_json": {
+        "report_group": "officer"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "captain",
+      "label": "Captain",
+      "sort_order": 4,
+      "metadata_json": {
+        "report_group": "officer"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "lieutenant",
+      "label": "Lieutenant",
+      "sort_order": 5,
+      "metadata_json": {
+        "report_group": "officer"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "warrant_officer",
+      "label": "Warrant Officer",
+      "sort_order": 6,
+      "metadata_json": {
+        "report_group": "jco"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "sergeant",
+      "label": "Sergeant",
+      "sort_order": 7,
+      "metadata_json": {
+        "report_group": "or"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "corporal",
+      "label": "Corporal",
+      "sort_order": 8,
+      "metadata_json": {
+        "report_group": "or"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "snk",
+      "label": "SNK",
+      "sort_order": 9,
+      "metadata_json": {
+        "report_group": "or"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "vip",
+      "label": "VIP",
+      "sort_order": 10,
+      "metadata_json": {
+        "priority": "vip"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "afns",
+      "label": "AFNS",
+      "sort_order": 11,
+      "metadata_json": {
+        "report_group": "officer"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "cadet",
+      "label": "Officer / Nursing cadet",
+      "sort_order": 12,
+      "metadata_json": {
+        "report_group": "cadet"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "nce",
+      "label": "NCE",
+      "sort_order": 13,
+      "metadata_json": {
+        "report_group": "nce"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "officer",
+      "label": "Officer",
+      "sort_order": 14,
+      "metadata_json": {
+        "report_group": "officer"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "jco",
+      "label": "JCO",
+      "sort_order": 15,
+      "metadata_json": {
+        "report_group": "jco"
+      },
+      "is_active": true
+    },
+    {
+      "category": "rank_relationship",
+      "value": "other",
+      "label": "Other",
+      "sort_order": 16,
+      "metadata_json": {
+        "report_group": "or"
+      },
+      "is_active": true
+    },
+    {
+      "category": "priority_category",
+      "value": "emergency",
+      "label": "Emergency",
+      "sort_order": 0,
+      "metadata_json": {
+        "weight": 0
+      },
+      "is_active": true
+    },
+    {
+      "category": "priority_category",
+      "value": "urgent",
+      "label": "Urgent",
+      "sort_order": 1,
+      "metadata_json": {
+        "weight": 1
+      },
+      "is_active": true
+    },
+    {
+      "category": "priority_category",
+      "value": "pregnant",
+      "label": "Pregnant",
+      "sort_order": 2,
+      "metadata_json": {
+        "weight": 2
+      },
+      "is_active": true
+    },
+    {
+      "category": "priority_category",
+      "value": "disabled",
+      "label": "Disabled",
+      "sort_order": 3,
+      "metadata_json": {
+        "weight": 3
+      },
+      "is_active": true
+    },
+    {
+      "category": "priority_category",
+      "value": "elderly",
+      "label": "Elderly",
+      "sort_order": 4,
+      "metadata_json": {
+        "weight": 4
+      },
+      "is_active": true
+    },
+    {
+      "category": "priority_category",
+      "value": "vip",
+      "label": "VIP",
+      "sort_order": 5,
+      "metadata_json": {
+        "weight": 5
+      },
+      "is_active": true
+    },
+    {
+      "category": "priority_category",
+      "value": "follow_up",
+      "label": "Follow-up",
+      "sort_order": 6,
+      "metadata_json": {
+        "weight": 6
+      },
+      "is_active": true
+    },
+    {
+      "category": "priority_category",
+      "value": "normal",
+      "label": "Normal",
+      "sort_order": 7,
+      "metadata_json": {
+        "weight": 7
+      },
+      "is_active": true
+    },
+    {
+      "category": "appointment_reason",
+      "value": "new_consultation",
+      "label": "New consultation",
+      "sort_order": 0,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "appointment_reason",
+      "value": "follow_up",
+      "label": "Follow-up",
+      "sort_order": 1,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "appointment_reason",
+      "value": "review",
+      "label": "Review",
+      "sort_order": 2,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "appointment_reason",
+      "value": "medical_board",
+      "label": "Medical board",
+      "sort_order": 3,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "appointment_reason",
+      "value": "other",
+      "label": "Other",
+      "sort_order": 4,
+      "metadata_json": {},
+      "is_active": true
+    },
+    {
+      "category": "beneficiary_type",
+      "value": "self",
+      "label": "Self",
+      "sort_order": 0,
+      "metadata_json": {
+        "report_code": "self"
+      },
+      "is_active": true
+    },
+    {
+      "category": "beneficiary_type",
+      "value": "family",
+      "label": "Family",
+      "sort_order": 1,
+      "metadata_json": {
+        "report_code": "family"
+      },
+      "is_active": true
+    },
+    {
+      "category": "beneficiary_type",
+      "value": "re",
+      "label": "RE",
+      "sort_order": 2,
+      "metadata_json": {
+        "report_code": "re"
+      },
+      "is_active": true
+    },
+    {
+      "category": "beneficiary_type",
+      "value": "cne",
+      "label": "CNE",
+      "sort_order": 3,
+      "metadata_json": {
+        "report_code": "cne"
+      },
+      "is_active": true
+    },
+    {
+      "category": "service_status",
+      "value": "serving",
+      "label": "Serving",
+      "sort_order": 0,
+      "metadata_json": {
+        "report_code": "serving"
+      },
+      "is_active": true
+    },
+    {
+      "category": "service_status",
+      "value": "retired",
+      "label": "Retired",
+      "sort_order": 1,
+      "metadata_json": {
+        "report_code": "retired"
+      },
+      "is_active": true
+    },
+    {
+      "category": "entitlement",
+      "value": "military",
+      "label": "Military",
+      "sort_order": 0,
+      "metadata_json": {
+        "report_code": "military"
+      },
+      "is_active": true
+    },
+    {
+      "category": "entitlement",
+      "value": "civil",
+      "label": "Civil entitled",
+      "sort_order": 1,
+      "metadata_json": {
+        "report_code": "civil"
+      },
+      "is_active": true
+    },
+    {
+      "category": "entitlement",
+      "value": "re",
+      "label": "RE",
+      "sort_order": 2,
+      "metadata_json": {
+        "report_code": "re"
+      },
+      "is_active": true
+    },
+    {
+      "category": "entitlement",
+      "value": "cne",
+      "label": "CNE",
+      "sort_order": 3,
+      "metadata_json": {
+        "report_code": "cne"
+      },
+      "is_active": true
+    },
+    {
+      "category": "family_relationship",
+      "value": "daughter",
+      "label": "DAUGHTER",
+      "sort_order": 0,
+      "metadata_json": {
+        "report_code": "daughter"
+      },
+      "is_active": true
+    },
+    {
+      "category": "family_relationship",
+      "value": "son",
+      "label": "SON",
+      "sort_order": 1,
+      "metadata_json": {
+        "report_code": "son"
+      },
+      "is_active": true
+    },
+    {
+      "category": "family_relationship",
+      "value": "wife",
+      "label": "WIFE",
+      "sort_order": 2,
+      "metadata_json": {
+        "report_code": "wife"
+      },
+      "is_active": true
+    },
+    {
+      "category": "family_relationship",
+      "value": "husband",
+      "label": "HUSBAND",
+      "sort_order": 3,
+      "metadata_json": {
+        "report_code": "husband"
+      },
+      "is_active": true
+    },
+    {
+      "category": "family_relationship",
+      "value": "mother",
+      "label": "MOTHER",
+      "sort_order": 4,
+      "metadata_json": {
+        "report_code": "mother"
+      },
+      "is_active": true
+    },
+    {
+      "category": "family_relationship",
+      "value": "father",
+      "label": "FATHER",
+      "sort_order": 5,
+      "metadata_json": {
+        "report_code": "father"
+      },
+      "is_active": true
+    },
+    {
+      "category": "family_relationship",
+      "value": "mother_in_law",
+      "label": "MOTHER IN LAW",
+      "sort_order": 6,
+      "metadata_json": {
+        "report_code": "mother_in_law"
+      },
+      "is_active": true
+    },
+    {
+      "category": "family_relationship",
+      "value": "father_in_law",
+      "label": "FATHER IN LAW",
+      "sort_order": 7,
+      "metadata_json": {
+        "report_code": "father_in_law"
+      },
+      "is_active": true
+    }
+  ],
+  "settings": {
+    "display": {
+      "privacy_mode": "initials",
+      "next_token_count": 5,
+      "ticker_message": "Please keep your registration slip ready"
+    },
+    "queue": {
+      "ordering_policy": "priority_then_sequence",
+      "late_grace_minutes": 15
+    },
+    "announcement": {
+      "enabled": true,
+      "language_order": [
+        "bn",
+        "en"
+      ],
+      "repeat_count": 1,
+      "rate": 0.88,
+      "volume": 1.0,
+      "voice_mode": "auto",
+      "cache_max_files": 40
+    },
+    "registration_fields": {
+      "required": [
+        "patient_name",
+        "rank",
+        "service_number",
+        "beneficiary_type",
+        "patient_source",
+        "family_relationship"
+      ],
+      "enabled": [
+        "patient_name",
+        "patient_phone",
+        "patient_source",
+        "service_number",
+        "age",
+        "unit",
+        "mri_area",
+        "contrast",
+        "film",
+        "report",
+        "rank",
+        "priority",
+        "beneficiary_type",
+        "entitlement",
+        "service_status",
+        "family_relationship"
+      ],
+      "custom": []
+    },
+    "patient_form": {
+      "layout": "modal",
+      "font_size": 14
+    },
+    "mri_summary_mapping": {
+      "re": "re",
+      "cne": "cne",
+      "civil:self": "serving_civil",
+      "military:self:serving:officer": "serving_officer",
+      "military:self:serving:cadet": "serving_cadet",
+      "military:self:serving:jco": "serving_jco_or",
+      "military:self:serving:or": "serving_jco_or",
+      "military:self:serving:nce": "serving_nce",
+      "rank:self:serving:brigadier_general": "__inherit__",
+      "rank:self:serving:colonel": "__inherit__",
+      "rank:self:serving:lieutenant_colonel": "__inherit__",
+      "rank:self:serving:major": "__inherit__",
+      "rank:self:serving:captain": "__inherit__",
+      "rank:self:serving:lieutenant": "__inherit__",
+      "rank:self:serving:warrant_officer": "__inherit__",
+      "rank:self:serving:sergeant": "__inherit__",
+      "rank:self:serving:corporal": "__inherit__",
+      "rank:self:serving:snk": "__inherit__",
+      "rank:self:serving:vip": "__inherit__",
+      "rank:self:serving:afns": "__inherit__",
+      "rank:self:serving:cadet": "__inherit__",
+      "rank:self:serving:nce": "__inherit__",
+      "rank:self:serving:officer": "__inherit__",
+      "rank:self:serving:jco": "__inherit__",
+      "rank:self:serving:other": "__inherit__",
+      "military:self:retired:officer": "retired_officer",
+      "military:self:retired:cadet": null,
+      "military:self:retired:jco": null,
+      "military:self:retired:or": "retired_or",
+      "military:self:retired:nce": null,
+      "rank:self:retired:brigadier_general": "__inherit__",
+      "rank:self:retired:colonel": "__inherit__",
+      "rank:self:retired:lieutenant_colonel": "__inherit__",
+      "rank:self:retired:major": "__inherit__",
+      "rank:self:retired:captain": "__inherit__",
+      "rank:self:retired:lieutenant": "__inherit__",
+      "rank:self:retired:warrant_officer": "__inherit__",
+      "rank:self:retired:sergeant": "__inherit__",
+      "rank:self:retired:corporal": "__inherit__",
+      "rank:self:retired:snk": "__inherit__",
+      "rank:self:retired:vip": "__inherit__",
+      "rank:self:retired:afns": "__inherit__",
+      "rank:self:retired:cadet": "__inherit__",
+      "rank:self:retired:nce": "__inherit__",
+      "rank:self:retired:officer": "__inherit__",
+      "rank:self:retired:jco": "__inherit__",
+      "rank:self:retired:other": "__inherit__",
+      "civil:family": "family_civil",
+      "military:family:serving:officer": "family_officer",
+      "military:family:serving:cadet": null,
+      "military:family:serving:jco": "family_jco_or_nce",
+      "military:family:serving:or": "family_jco_or_nce",
+      "military:family:serving:nce": "family_jco_or_nce",
+      "rank:family:serving:brigadier_general": "__inherit__",
+      "rank:family:serving:colonel": "__inherit__",
+      "rank:family:serving:lieutenant_colonel": "__inherit__",
+      "rank:family:serving:major": "__inherit__",
+      "rank:family:serving:captain": "__inherit__",
+      "rank:family:serving:lieutenant": "__inherit__",
+      "rank:family:serving:warrant_officer": "__inherit__",
+      "rank:family:serving:sergeant": "__inherit__",
+      "rank:family:serving:corporal": "__inherit__",
+      "rank:family:serving:snk": "__inherit__",
+      "rank:family:serving:vip": "__inherit__",
+      "rank:family:serving:afns": "__inherit__",
+      "rank:family:serving:cadet": "__inherit__",
+      "rank:family:serving:nce": "__inherit__",
+      "rank:family:serving:officer": "__inherit__",
+      "rank:family:serving:jco": "__inherit__",
+      "rank:family:serving:other": "__inherit__",
+      "military:family:retired:officer": "retired_officer",
+      "military:family:retired:cadet": null,
+      "military:family:retired:jco": null,
+      "military:family:retired:or": null,
+      "military:family:retired:nce": null,
+      "rank:family:retired:brigadier_general": "__inherit__",
+      "rank:family:retired:colonel": "__inherit__",
+      "rank:family:retired:lieutenant_colonel": "__inherit__",
+      "rank:family:retired:major": "__inherit__",
+      "rank:family:retired:captain": "__inherit__",
+      "rank:family:retired:lieutenant": "__inherit__",
+      "rank:family:retired:warrant_officer": "__inherit__",
+      "rank:family:retired:sergeant": "__inherit__",
+      "rank:family:retired:corporal": "__inherit__",
+      "rank:family:retired:snk": "__inherit__",
+      "rank:family:retired:vip": "__inherit__",
+      "rank:family:retired:afns": "__inherit__",
+      "rank:family:retired:cadet": "__inherit__",
+      "rank:family:retired:nce": "__inherit__",
+      "rank:family:retired:officer": "__inherit__",
+      "rank:family:retired:jco": "__inherit__",
+      "rank:family:retired:other": "__inherit__"
+    },
+    "mri_rank_mapping_initialized": {
+      "version": 1
+    }
+  }
+}

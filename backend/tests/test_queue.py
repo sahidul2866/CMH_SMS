@@ -183,17 +183,17 @@ def test_reception_report_contrast_and_patient_type_filters():
     t_family = client.post("/api/v1/tokens", json={
         **token_payload("Family Contrast Patient"),
         "beneficiary_type": "family",
-        "family_relationship": "spouse",
+        "family_relationship": "wife",
         "rank": "captain",
         "contrast": 2,
     }).json()
 
-    p_re = {**token_payload("RE No Contrast Patient"), "beneficiary_type": "re", "contrast": 0}
-    p_re.pop("rank", None)
+    p_re = {**token_payload("RE No Contrast Patient"), "beneficiary_type": "re", "family_relationship": "mother", "contrast": 0}
+    p_re["rank"] = "captain"
     t_re = client.post("/api/v1/tokens", json=p_re).json()
 
     p_cne = {**token_payload("CNE Contrast Patient"), "beneficiary_type": "cne", "contrast": 1}
-    p_cne.pop("rank", None)
+    p_cne["rank"] = "captain"
     t_cne = client.post("/api/v1/tokens", json=p_cne).json()
 
     # 1. Filter by contrast=used
@@ -1435,7 +1435,7 @@ def test_monthly_summary_classification_snapshot_exports_and_correction():
         ('family', 'retired', 'military', 'or', None),
     ]
     for person, status, entitlement, rank, expected in matrix:
-        payload = {**token_payload(), 'doctor_id': None, 'waiting_room': '', 'rank': rank, 'beneficiary_type': person, 'service_status': status, 'entitlement': entitlement, 'family_relationship': 'spouse' if person == 'family' else ''}
+        payload = {**token_payload(), 'doctor_id': None, 'waiting_room': '', 'rank': rank, 'beneficiary_type': person, 'service_status': status, 'entitlement': entitlement, 'family_relationship': 'wife' if person == 'family' else ''}
         response = client.post('/api/v1/tokens', json=payload)
         assert response.status_code == 201, response.text
         token = response.json()
@@ -1457,7 +1457,7 @@ def test_monthly_summary_classification_snapshot_exports_and_correction():
         rank.metadata_json = {'report_group': 'or'}
         db.commit()
     assert client.get('/api/v1/reports/mri-summary', params=query).json() == data
-    correction = client.patch(f"/api/v1/tokens/{legacy['id']}/classification", json={'beneficiary_type': 'family', 'entitlement': 'military', 'service_status': 'serving', 'rank': 'jco', 'family_relationship': 'child'})
+    correction = client.patch(f"/api/v1/tokens/{legacy['id']}/classification", json={'beneficiary_type': 'family', 'entitlement': 'military', 'service_status': 'serving', 'rank': 'jco', 'family_relationship': 'son'})
     assert correction.status_code == 200, correction.text
     assert correction.json()['summary_category'] == 'family_jco_or_nce'
     with SessionLocal() as db:
@@ -1493,7 +1493,7 @@ def test_summary_completion_dates_use_dhaka_and_invalid_inputs():
     assert report['rows'][0]['total'] == 1 and report['rows'][-1]['total'] == 1
     assert client.get('/api/v1/reports/mri-summary', params={'month': '2026-13'}).status_code == 422
     assert client.get('/api/v1/reports/mri-summary', params={'month': '2026-06', 'basis': 'anything'}).status_code == 422
-    invalid = client.post('/api/v1/tokens', json={**token_payload(), 'rank': 'not-a-rank', 'beneficiary_type': 'family', 'entitlement': 'military', 'family_relationship': 'spouse'})
+    invalid = client.post('/api/v1/tokens', json={**token_payload(), 'rank': 'not-a-rank', 'beneficiary_type': 'family', 'entitlement': 'military', 'family_relationship': 'wife'})
     assert invalid.status_code == 422
 
 
@@ -1595,7 +1595,7 @@ def test_configurable_summary_mapping_preserves_snapshots_and_validates_changes(
     from app.models import AuditEvent
     install_summary_lookups()
     payload = {**token_payload(), 'rank': 'jco', 'beneficiary_type': 'family', 'entitlement': 'military',
-               'service_status': 'retired', 'family_relationship': 'spouse'}
+               'service_status': 'retired', 'family_relationship': 'wife'}
     old = client.post('/api/v1/tokens', json=payload).json()
     assert old['summary_category'] is None
     response = client.get('/api/v1/mri-summary-mapping')
@@ -1639,7 +1639,7 @@ def test_admin_creates_roles_users_and_reset_requires_password_change_for_every_
         assert result.status_code == 201, result.text
         user_id = result.json()['id']
         assert result.json()['must_change_password']
-        login = client.post('/api/v1/auth/login', json={'username': f'test-{role}', 'password': 'Temporary123!'})
+        login = client.post('/api/v1/auth/login', json={'username': result.json()['username'], 'password': 'Temporary123!'})
         assert login.status_code == 200 and login.json()['must_change_password']
         assert client.get('/api/v1/doctors').status_code == 403
         assert client.get('/api/v1/auth/session').json()['must_change_password']
@@ -1655,8 +1655,8 @@ def test_admin_creates_roles_users_and_reset_requires_password_change_for_every_
         stale = TestClient(app)
         stale.cookies.set('cmh_session', old_cookie)
         assert stale.get('/api/v1/auth/me').status_code == 401
-        assert client.post('/api/v1/auth/login', json={'username': f'test-{role}', 'password': 'Personal123!'}).status_code == 401
-        reset_login = client.post('/api/v1/auth/login', json={'username': f'test-{role}', 'password': 'ResetAgain123!'})
+        assert client.post('/api/v1/auth/login', json={'username': result.json()['username'], 'password': 'Personal123!'}).status_code == 401
+        reset_login = client.post('/api/v1/auth/login', json={'username': result.json()['username'], 'password': 'ResetAgain123!'})
         assert reset_login.status_code == 200 and reset_login.json()['must_change_password']
         assert client.get('/api/v1/users').status_code == 403
         assert client.post('/api/v1/auth/logout').status_code == 204
@@ -1786,7 +1786,7 @@ def test_mapping_tracks_patient_type_status_and_entitlement_dropdowns():
     client.patch(f"/api/v1/lookups/{ids['entitlement', 'military']}", json={'is_active': False}).raise_for_status()
     assert not any(row['key'].startswith(('military:', 'rank:')) for row in rows())
     client.patch(f"/api/v1/lookups/{ids['entitlement', 're']}", json={'is_active': False}).raise_for_status()
-    assert not any(row['key'] == 're' for row in rows())
+    assert any(row['key'] == 're' for row in rows())  # Patient type RE still exists.
 
 
 def test_dashboard_priority_filter_applies_to_totals_charts_rooms_and_details():
@@ -2124,7 +2124,7 @@ def test_service_search_keeps_sponsor_and_family_members_and_historical_entries(
     base = token_payload() | {'service_number': 'BA-Shared', 'rank': 'officer', 'beneficiary_type': 'self', 'entitlement': 'military', 'service_status': 'serving'}
     owner = client.post('/api/v1/tokens', json=base | {'patient_name': 'Sponsor Name'})
     assert owner.status_code == 201, owner.text
-    child = client.post('/api/v1/tokens', json=base | {'patient_name': 'Child Name', 'beneficiary_type': 'family', 'rank': 'officer', 'family_relationship': 'child'})
+    child = client.post('/api/v1/tokens', json=base | {'patient_name': 'Child Name', 'beneficiary_type': 'family', 'rank': 'officer', 'family_relationship': 'son'})
     assert child.status_code == 201, child.text
     with SessionLocal() as db:
         row = db.get(QueueToken, owner.json()['id'])
@@ -2183,7 +2183,7 @@ def test_family_announcement_uses_patient_name_without_sponsor_rank(monkeypatch,
     assert all('Major' not in text for text in spoken)
 
 
-def test_multiple_radiographers_can_be_assigned_to_the_same_room():
+def test_room_login_rejects_duplicate_accounts():
     from app.database import SessionLocal
     with SessionLocal() as db:
         db.add(RoleDefinition(name='radiographer', display_name='Radiographer', access_profile='radiographer', permissions=[]))
@@ -2191,8 +2191,9 @@ def test_multiple_radiographers_can_be_assigned_to_the_same_room():
     for username in ('tech_one', 'tech_two'):
         response = client.post('/api/v1/users', json=dict(username=username, full_name=username,
             password='RoomStaff123!', role='radiographer', doctor_id='dr-khan'))
-        assert response.status_code == 201, response.text
-        assert response.json()['doctor_id'] == 'dr-khan'
+        assert response.status_code == (201 if username == 'tech_one' else 409), response.text
+        if username == 'tech_one':
+            assert response.json()['username'] == '205'
     with SessionLocal() as db:
         room = db.get(Doctor, 'dr-khan')
         room.is_active = False

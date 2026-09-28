@@ -38,11 +38,15 @@ COLUMNS = [
 ]
 GROUPS = [('officer', 'Officers / AFNS'), ('cadet', 'Officer / Nursing cadet'),
           ('jco', 'JCO'), ('or', 'OR / Recruit'), ('nce', 'NCE')]
+RELATIONSHIPS = {
+    'family': ('daughter', 'son', 'wife', 'husband'),
+    're': ('mother', 'father', 'mother_in_law', 'father_in_law'),
+}
 CLASSIFICATION_LOOKUPS = {
     'beneficiary_type': [('self', 'Self'), ('family', 'Family'), ('re', 'RE'), ('cne', 'CNE')],
     'service_status': [('serving', 'Serving'), ('retired', 'Retired')],
     'entitlement': [('military', 'Military'), ('civil', 'Civil entitled'), ('re', 'RE'), ('cne', 'CNE')],
-    'family_relationship': [('spouse', 'Spouse'), ('child', 'Child'), ('parent', 'Parent'), ('other', 'Other dependent')],
+    'family_relationship': [(value, value.replace('_', ' ').upper()) for choices in RELATIONSHIPS.values() for value in choices],
 }
 RANK_GROUPS = dict.fromkeys(['brigadier_general', 'colonel', 'lieutenant_colonel', 'major', 'captain', 'lieutenant', 'officer'], 'officer')
 RANK_GROUPS.update(afns='officer', cadet='cadet', nce='nce', warrant_officer='jco', jco='jco', sergeant='or', corporal='or', shoinik='or', soldier='or', snk='or')
@@ -68,8 +72,9 @@ def mapping_rows(db):
 
     people, statuses, entitlements = (labels(category) for category in
                                       ('beneficiary_type', 'service_status', 'entitlement'))
-    rows = [{'key': key, 'label': f'Entitlement: {entitlements[key]}', 'default_category': key}
-            for key in ('re', 'cne') if key in entitlements]
+    rows = [{'key': key, 'label': f"Patient type: {people.get(key, entitlements.get(key, key.upper()))} · "
+             + ('MOTHER / FATHER / MOTHER IN LAW / FATHER IN LAW' if key == 're' else 'No relationship'),
+             'default_category': key} for key in ('re', 'cne') if key in people or key in entitlements]
     for person in ('self', 'family'):
         if person not in people:
             continue
@@ -82,7 +87,7 @@ def mapping_rows(db):
             if status not in statuses:
                 continue
             prefix = f"{entitlements['military']} · {people[person]} · {statuses[status]}"
-            suffix = ' (sponsor)' if person == 'family' else ''
+            suffix = ' (sponsor; DAUGHTER / SON / WIFE / HUSBAND)' if person == 'family' else ''
             for group, label in GROUPS:
                 rows.append({'key': f'military:{person}:{status}:{group}',
                              'label': f'{prefix} · {label}{suffix}',
@@ -168,8 +173,29 @@ def save_mapping(payload: MappingUpdate, db: Session = Depends(get_db), user: Us
     return mapping_response(db)
 
 
+def normalize_relationship(db, payload):
+    """Patient type controls which relationship can be recorded."""
+    patient_type = getattr(payload, 'beneficiary_type', None)
+    option = db.scalar(select(LookupOption).where(LookupOption.category == 'beneficiary_type',
+                       LookupOption.value == patient_type)) if patient_type else None
+    person = (option.metadata_json or {}).get('report_code', patient_type) if option else patient_type
+    entitlement = getattr(payload, 'entitlement', None)
+    if person in ('re', 'cne'):
+        payload = payload.model_copy(update={'entitlement': person})
+    elif person in ('self', 'family') and entitlement in ('re', 'cne'):
+        payload = payload.model_copy(update={'entitlement': 'military'})
+    relationship = getattr(payload, 'family_relationship', None)
+    if person in ('self', 'cne'):
+        return payload.model_copy(update={'family_relationship': None})
+    if relationship and person in RELATIONSHIPS and relationship not in RELATIONSHIPS[person]:
+        choices = ', '.join(value.replace('_', ' ').upper() for value in RELATIONSHIPS[person])
+        raise HTTPException(422, f'{person.upper()} relationship must be one of: {choices}')
+    return payload
+
+
 def classify(db: Session, payload) -> str | None:
     """Resolve only documented combinations. Unknown combinations stay visible for review."""
+    payload = normalize_relationship(db, payload)
     values = {}
     for field in CLASSIFICATION_LOOKUPS:
         value = getattr(payload, field, None)
@@ -185,6 +211,8 @@ def classify(db: Session, payload) -> str | None:
         values[field] = (option.metadata_json or {}).get('report_code', value)
     if values.get('beneficiary_type') in ('re', 'cne'):
         cat = values['beneficiary_type']
+        if cat == 're' and not values.get('family_relationship'):
+            return None
         return configured_category(db, cat, cat)
     if values.get('entitlement') in ('re', 'cne'):
         return configured_category(db, values['entitlement'], values['entitlement'])
@@ -321,6 +349,10 @@ def correct_classification(token_id: str, payload: ClassificationCorrection, db:
         validated = validate_registration(db, ClassificationCorrection(**supplied), existing=token, check_required=False)
         changes = {key: getattr(validated, key) for key in input_keys if key in validated.model_fields_set}
         merged = ClassificationCorrection(**{key: changes.get(key, getattr(token, key)) for key in input_keys})
+        merged = normalize_relationship(db, merged)
+        for field in ('family_relationship', 'entitlement'):
+            if getattr(merged, field) != getattr(token, field) or field in changes:
+                changes[field] = getattr(merged, field)
         # Required dependent fields must be checked against the complete classification.
         from .registration import applicable, blank, requirements, FIELDS
         policy = requirements(db)

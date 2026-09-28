@@ -120,6 +120,7 @@ from .schemas import (
     ClientDiagnosticBatch,
     TokenRead,
     TokenRoomUpdateRequest,
+    TokenSuppliesUpdate,
     TransferRequest,
     UserCreate,
     UserRead,
@@ -530,6 +531,7 @@ PERMISSION_CATALOG = [
     {"key": "pages.display", "label": "Open Waiting Display", "group": "Pages"},
     {"key": "pages.reports", "label": "Open Reports & Audit", "group": "Pages"},
     {"key": "pages.dashboard", "label": "Open Radiography Dashboard", "group": "Pages"},
+    {"key": "queue.supplies.update", "label": "Update film and contrast counts", "group": "Queue"},
     {"key": "queue.serial.create", "label": "Generate patient serials", "group": "Queue"},
     {"key": "queue.view", "label": "View permitted queue", "group": "Queue"},
     {"key": "queue.call", "label": "Call patients", "group": "Queue"},
@@ -626,9 +628,6 @@ def delete_role(role_name: str, _: User = Depends(require_permission("roles.mana
 
 @app.post("/api/v1/users", response_model=UserRead, status_code=201)
 def create_user(payload: UserCreate, _: User = Depends(require_permission("users.create")), db: Session = Depends(get_db)):
-    username = payload.username.lower()
-    if db.scalar(select(User).where(User.username == username)):
-        raise HTTPException(409, "Username already exists")
     role = db.get(RoleDefinition, payload.role)
     if not role:
         raise HTTPException(422, "Assigned role does not exist")
@@ -636,9 +635,19 @@ def create_user(payload: UserCreate, _: User = Depends(require_permission("users
         raise HTTPException(422, "Radiographer accounts must be assigned to a room")
     if payload.doctor_id and not db.scalar(select(Doctor).where(Doctor.id == payload.doctor_id, Doctor.is_active.is_(True))):
         raise HTTPException(422, "Assigned room does not exist or is inactive")
+    if role.access_profile == "radiographer":
+        from .room_accounts import room_username
+        username = room_username(db, payload.doctor_id)
+        full_name = payload.full_name or f"Room {db.get(Doctor, payload.doctor_id).room_number}"
+    else:
+        if not payload.username or len(payload.username) < 2 or not payload.full_name:
+            raise HTTPException(422, "User ID and full name are required")
+        username, full_name = payload.username.lower(), payload.full_name
+    if db.scalar(select(User).where(User.username == username)):
+        raise HTTPException(409, "User ID already exists")
     user = User(
         username=username,
-        full_name=payload.full_name,
+        full_name=full_name,
         password_hash=hash_password(payload.password),
         must_change_password=True,
         role=payload.role,
@@ -678,6 +687,8 @@ def update_user(
         raise HTTPException(403, "Role assignment permission required")
     if general_fields and not has_permission(administrator, db, "users.update"):
         raise HTTPException(403, "User update permission required")
+    previous_room = db.get(Doctor, user.doctor_id) if user.doctor_id else None
+    room_display_name = f"Room {previous_room.room_number}" if previous_room else None
     for key, value in values.items():
         setattr(user, key, value)
     definition = db.get(RoleDefinition, user.role)
@@ -687,6 +698,15 @@ def update_user(
         raise HTTPException(422, "Radiographer accounts must be assigned to a room")
     if user.doctor_id and not db.scalar(select(Doctor).where(Doctor.id == user.doctor_id, Doctor.is_active.is_(True))):
         raise HTTPException(422, "Assigned room does not exist or is inactive")
+    if definition.access_profile == "radiographer" and assignment_fields:
+        from .room_accounts import room_username
+        previous_username = user.username
+        user.username = room_username(db, user.doctor_id, user)
+        if user.full_name == room_display_name:
+            user.full_name = f"Room {db.get(Doctor, user.doctor_id).room_number}"
+        if user.username != previous_username:
+            db.add(AuditEvent(action="user.login_id_updated", actor=administrator.username,
+                             detail={"user_id": user.id, "previous": previous_username, "username": user.username}))
     db.commit()
     db.refresh(user)
     return serialize_user(user, db)
@@ -883,6 +903,18 @@ def update_doctor(
     for field, value in updates.items():
         if value is not None and field in {"name", "department", "designation", "room_number", "waiting_room_id", "token_prefix"}:
             setattr(doctor, field, value)
+    if doctor.room_number != previous['room_number']:
+        from .room_accounts import room_username
+        accounts = db.scalars(select(User).where(User.doctor_id == doctor.id).order_by(User.username)).all()
+        for account in accounts:
+            if user_access_profile(account, db) == 'radiographer':
+                if account.full_name == f"Room {previous['room_number']}":
+                    account.full_name = f"Room {doctor.room_number}"
+                previous_username = account.username
+                account.username = room_username(db, doctor.id, account)
+                db.add(AuditEvent(action='user.login_id_updated', actor=user.username,
+                                 detail={'user_id': account.id, 'previous': previous_username, 'username': account.username}))
+                db.flush()
     db.add(AuditEvent(action="doctor.updated", actor=user.username, detail={"doctor_id": doctor.id, "previous": previous, "changes": updates}))
     db.commit()
     db.refresh(doctor)
@@ -965,11 +997,33 @@ def service_number_suggestions(q: str = Query(min_length=2, max_length=40), offs
     return {"items": [dict(row) for row in rows[:50]], "has_more": len(rows) > 50}
 
 
+@app.patch("/api/v1/tokens/{token_id}/supplies", response_model=TokenRead)
+def update_token_supplies(token_id: str, payload: TokenSuppliesUpdate,
+                          user: User = Depends(require_permission("queue.supplies.update")), db: Session = Depends(get_db)):
+    token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
+    if not token:
+        raise HTTPException(404, "Patient not found")
+    if user_access_profile(user, db) == 'radiographer' and (not user.doctor_id or token.doctor_id != user.doctor_id):
+        raise HTTPException(403, "Only patients assigned to your room can be updated")
+    if token.status in ('cancelled', 'no_show'):
+        raise HTTPException(409, "Cannot update a cancelled or absent patient")
+    changes = payload.model_dump(exclude_unset=True)
+    previous = {key: getattr(token, key) for key in changes}
+    for key, value in changes.items():
+        setattr(token, key, value)
+    db.add(AuditEvent(action='token.supplies_updated', actor=user.username, token_id=token.id,
+                      detail={'previous': previous, 'changes': changes}))
+    db.commit()
+    return QueueService(db)._read(token)
+
+
 @app.patch("/api/v1/tokens/{token_id}", response_model=TokenRead)
 def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depends(require_permission("queue.serial.create")), db: Session = Depends(get_db)):
     token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
     if not token:
         raise HTTPException(404, "Patient not found")
+    if user_access_profile(user, db) == "radiographer" and token.doctor_id and token.doctor_id != user.doctor_id:
+        raise HTTPException(403, "Patient is assigned to another room")
     if token.status != "waiting":
         raise HTTPException(409, "Only waiting patients can be edited; refresh the queue")
     from .registration import validate_registration

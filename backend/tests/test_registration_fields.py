@@ -131,7 +131,7 @@ def test_direct_classification_preserves_inputs_and_survives_patient_edits():
     assert edited.json()['summary_category_source'] == 'manual'
     from app.seed import seed
     seed()
-    automatic = client.patch(f"/api/v1/tokens/{token['id']}/classification", json={'mode': 'inputs', 'entitlement': 're'})
+    automatic = client.patch(f"/api/v1/tokens/{token['id']}/classification", json={'mode': 'inputs', 'beneficiary_type': 're', 'family_relationship': 'mother'})
     assert automatic.status_code == 200, automatic.text
     assert automatic.json()['summary_category'] == 're'
     assert automatic.json()['summary_category_source'] == 'automatic'
@@ -163,7 +163,7 @@ def test_direct_classification_works_with_disabled_inputs_and_required_registrat
     assert result.json()['summary_category'] == 're'
     report = client.get('/api/v1/reports/mri-summary', params={'month': token['token_date'][:7]}).json()
     assert report['totals']['re'] == 1
-    assert client.patch(f"/api/v1/tokens/{token['id']}/classification", json={'mode': 'inputs', 'entitlement': 're'}).status_code == 422
+    assert client.patch(f"/api/v1/tokens/{token['id']}/classification", json={'mode': 'inputs', 'beneficiary_type': 're', 'family_relationship': 'mother'}).status_code == 422
 
 
 def test_classification_metadata_uses_classify_permission_without_settings_permission():
@@ -193,6 +193,8 @@ def test_patient_type_unified_workflow_and_summary_reporting():
     from app.seed import seed
     seed()
 
+    save_policy(required=['patient_name', 'beneficiary_type', 'family_relationship'])
+
     # Verify classification options contain re and cne in beneficiary_type
     options = client.get('/api/v1/classification-options').json()
     b_types = [item['value'] for item in options['lookups'] if item['category'] == 'beneficiary_type']
@@ -216,7 +218,7 @@ def test_patient_type_unified_workflow_and_summary_reporting():
         'beneficiary_type': 'family',
         'rank': 'captain',
         'service_status': 'serving',
-        'family_relationship': 'spouse'
+        'family_relationship': 'wife'
     })
     assert t_family.status_code == 201, t_family.text
     assert t_family.json()['entitlement'] == 'military'
@@ -225,7 +227,7 @@ def test_patient_type_unified_workflow_and_summary_reporting():
     # 3. RE -> inferred re entitlement -> re column
     t_re = client.post('/api/v1/tokens', json={
         'patient_name': 'Mother of Capt',
-        'beneficiary_type': 're'
+        'beneficiary_type': 're', 'family_relationship': 'mother'
     })
     assert t_re.status_code == 201, t_re.text
     assert t_re.json()['entitlement'] == 're'
@@ -247,3 +249,82 @@ def test_patient_type_unified_workflow_and_summary_reporting():
     assert report['totals']['re'] >= 1
     assert report['totals']['cne'] >= 1
 
+
+
+def test_relationships_follow_patient_type_and_summary_mapping():
+    from app.seed import seed
+    seed()
+    save_policy(required=['patient_name', 'beneficiary_type', 'family_relationship'])
+    for patient_type, relationships, expected in (
+        ('family', ('daughter', 'son', 'wife', 'husband'), 'family_officer'),
+        ('re', ('mother', 'father', 'mother_in_law', 'father_in_law'), 're'),
+    ):
+        for relationship in relationships:
+            response = client.post('/api/v1/tokens', json={
+                'patient_name': f'Test {relationship}', 'beneficiary_type': patient_type,
+                'family_relationship': relationship, 'rank': 'captain', 'service_status': 'serving',
+            })
+            assert response.status_code == 201, response.text
+            assert response.json()['family_relationship'] == relationship
+            assert response.json()['summary_category'] == expected
+    for patient_type, relationship in [('family', 'mother'), ('family', 'spouse'), ('re', 'daughter'), ('re', 'wife')]:
+        response = client.post('/api/v1/tokens', json={
+            'patient_name': 'Invalid relationship', 'beneficiary_type': patient_type,
+            'family_relationship': relationship, 'rank': 'captain',
+        })
+        assert response.status_code == 422, response.text
+    cne = client.post('/api/v1/tokens', json={
+        'patient_name': 'No relationship', 'beneficiary_type': 'cne', 'family_relationship': 'wife',
+    })
+    assert cne.status_code == 201, cne.text
+    assert cne.json()['family_relationship'] is None
+    assert cne.json()['summary_category'] == 'cne'
+    rows = client.get('/api/v1/mri-summary-mapping').json()['rows']
+    assert 'MOTHER IN LAW' in next(row['label'] for row in rows if row['key'] == 're')
+    assert 'No relationship' in next(row['label'] for row in rows if row['key'] == 'cne')
+    assert any('DAUGHTER / SON / WIFE / HUSBAND' in row['label'] for row in rows)
+
+
+def test_changing_patient_type_clears_cne_relationship_and_requires_valid_re_relationship():
+    from app.seed import seed
+    seed()
+    save_policy(required=['patient_name', 'beneficiary_type', 'family_relationship'])
+    family = client.post('/api/v1/tokens', json={
+        'patient_name': 'Family patient', 'beneficiary_type': 'family', 'family_relationship': 'son',
+        'rank': 'captain', 'service_status': 'serving',
+    })
+    assert family.status_code == 201, family.text
+    url = f"/api/v1/tokens/{family.json()['id']}/classification"
+    invalid = client.patch(url, json={'beneficiary_type': 're'})
+    assert invalid.status_code == 422
+    re = client.patch(url, json={'beneficiary_type': 're', 'family_relationship': 'father'})
+    assert re.status_code == 200, re.text
+    assert re.json()['summary_category'] == 're'
+    assert re.json()['entitlement'] == 're'
+    cne = client.patch(url, json={'beneficiary_type': 'cne'})
+    assert cne.status_code == 200, cne.text
+    assert cne.json()['family_relationship'] is None
+    assert cne.json()['summary_category'] == 'cne'
+    missing = client.post('/api/v1/tokens', json={'patient_name': 'Missing RE relation', 'beneficiary_type': 're'})
+    assert missing.status_code == 422
+
+
+def test_patient_type_controls_summary_when_old_entitlement_is_submitted():
+    from app.seed import seed
+    seed()
+    save_policy(required=['patient_name', 'beneficiary_type', 'family_relationship'])
+    response = client.post('/api/v1/tokens', json={
+        'patient_name': 'Family with stale RE value', 'beneficiary_type': 'family',
+        'entitlement': 're', 'family_relationship': 'daughter', 'rank': 'captain', 'service_status': 'serving',
+    })
+    assert response.status_code == 201, response.text
+    assert response.json()['summary_category'] == 'family_officer'
+    assert response.json()['entitlement'] == 'military'
+    mappings = {row['key']: row['category'] for row in client.get('/api/v1/mri-summary-mapping').json()['rows']}
+    mappings['re'] = None
+    client.put('/api/v1/mri-summary-mapping', json={'mappings': mappings}).raise_for_status()
+    re = client.post('/api/v1/tokens', json={
+        'patient_name': 'Mapped RE patient', 'beneficiary_type': 're', 'family_relationship': 'mother_in_law',
+    })
+    assert re.status_code == 201, re.text
+    assert re.json()['summary_category'] is None

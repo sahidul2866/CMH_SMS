@@ -9,6 +9,7 @@ export class QueueApiService {
   private readonly http = inject(HttpClient);
   private readonly baseUrl = '/api/v1';
 
+  updateSupplies(id: string, payload: {film: number | null; contrast: number | null}) { return this.http.patch<QueueToken>(`${this.baseUrl}/tokens/${id}/supplies`, payload); }
   summaryMapping() { return this.http.get<{rows: {key: string; label: string; category: string | null; default_category: string | null}[]; columns: {key: string; label: string}[]}>(`${this.baseUrl}/mri-summary-mapping`); }
   saveSummaryMapping(mappings: Record<string, string | null>) { return this.http.put(`${this.baseUrl}/mri-summary-mapping`, {mappings}); }
 

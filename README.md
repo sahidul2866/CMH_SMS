@@ -163,6 +163,43 @@ Run from `backend/` after the environment has been created:
 .venv/bin/python -m app.seed
 ```
 
+### Reset all application data to the current defaults
+
+Stop the application and load the deployment environment, including `CMH_SMS_DATABASE_URL`.
+Run from `backend/`:
+
+```bash
+.venv/bin/alembic -x reset=true upgrade head
+```
+
+This explicitly deletes all tables, views, and records in the application's default database schema,
+then rebuilds the schema and defaults frozen in revision `20260928_0033`. It bypasses old migrations,
+so missing tables, duplicate records, unknown migration revisions, and partially upgraded schemas
+cannot block it. Both SQLite and PostgreSQL are supported. The database itself must exist and be
+reachable with permissions to rebuild its schema. Database connection, permission, and storage
+errors are reported; they are never treated as a successful reset.
+
+The reset creates:
+
+- Room queues and one radiographer login each: `110`, `104`, `116`, `117`.
+- The configured administrator, plus `reception`, `radiography_head`, `auditor`, and `display`.
+- Numbered waiting areas, current dropdowns, required registration fields, bilingual announcement
+  settings, and MRI summary mappings. Family relationships are DAUGHTER / SON / WIFE / HUSBAND;
+  RE relationships are MOTHER / FATHER / MOTHER IN LAW / FATHER IN LAW; CNE has no relationship.
+- Radiographer access to patient registration and room-scoped film/contrast updates.
+- Empty patient, queue, appointment, schedule, session, audit, and SMS tables.
+
+Use `CMH_SMS_ADMIN_PASSWORD` and `CMH_SMS_SEED_USER_PASSWORD` for initial passwords (at least
+10 characters). Unset passwords are generated. The reset saves temporary credentials in a private
+`backend/data/reset-credentials-*.json` file and prints its location, never the passwords.
+`CMH_SMS_RESET_CREDENTIALS_DIR` can select another directory. All accounts must change their
+password at first login. Existing account passwords are replaced by this reset.
+
+All schema and data changes run in one transaction. A failure rolls them back and removes the
+new credential file. Repeating the explicit reset command rebuilds the same clean state.
+Ordinary `alembic upgrade head` and startup do not reset records. Downgrading does not recover
+deleted data; recovery requires restoring a backup.
+
 Set `CMH_SMS_DATABASE_URL` before `./run.sh` to use an external PostgreSQL database. No HMS database or runtime is used.
 
 For a fresh Windows PC, follow [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
@@ -230,7 +267,7 @@ Mappings start with the existing report rules and survive restarts. Changes are 
 
 Administrators can create roles and users, assign roles, and reset passwords for all accounts, including other administrators. New accounts and administrator-reset passwords require a password change immediately after login. Until then, operational API and websocket access is blocked. Resetting a password revokes existing sessions; changing it clears the requirement.
 
-Run the usual migration and seed steps (`cd backend`, `.venv/bin/alembic upgrade head`, `.venv/bin/python -m app.seed`) with deployment environment variables loaded. The seed creates missing built-in roles and these accounts: the configured administrator, `reception`, `radiographer`, `radiographer2`, `radiographer3`, `radiographer4`, `radiography_head`, `auditor`, and `display`. Radiographers are assigned to the four seeded directory entries. The administrator uses `CMH_SMS_ADMIN_PASSWORD`; staff use `CMH_SMS_SEED_USER_PASSWORD`, falling back to that administrator bootstrap password. Supply one of these environment variables to create staff accounts; no hardcoded password is used. Existing accounts, passwords and assignments are preserved on subsequent seed runs.
+Run the usual migration and seed steps (`cd backend`, `.venv/bin/alembic upgrade head`, `.venv/bin/python -m app.seed`) with deployment environment variables loaded. The seed creates missing built-in roles and these accounts: the configured administrator, `reception`, `radiography_head`, `auditor`, and `display`. It does not recreate named radiographers. Configure room accounts in Settings, or use the explicit database reset above to create the four current room-number logins. The administrator uses `CMH_SMS_ADMIN_PASSWORD`; staff use `CMH_SMS_SEED_USER_PASSWORD`, falling back to that administrator bootstrap password. Supply one of these environment variables to create staff accounts; no hardcoded password is used. Existing accounts, passwords and assignments are preserved on subsequent seed runs.
 
 `mri_rank_mapping_initialized` is an internal one-time seed marker, excluded from the settings UI. It prevents initial rank mappings from overwriting administrator edits.
 

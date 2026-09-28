@@ -79,7 +79,7 @@ def applicable(db, payload, key):
         return (option.metadata_json or {}).get('report_code', value) if option else value
     b_type = code('beneficiary_type')
     ent_code = code('entitlement')
-    family = b_type == 'family'
+    family = b_type in ('family', 're')
     military = (ent_code == 'military' or (b_type in ('self', 'family') and ent_code != 'civil'))
     if key == 'entitlement':
         return False
@@ -118,6 +118,9 @@ def validate_registration(db, payload, existing=None, check_required=True):
             inferred = {'self': 'military', 'family': 'military', 're': 're', 'cne': 'cne'}.get(b_code)
             if inferred:
                 payload = payload.model_copy(update={'entitlement': inferred})
+    if check_required:
+        from .monthly_report import normalize_relationship
+        payload = normalize_relationship(db, payload)
     if hasattr(payload, 'ward_text'):
         payload = payload.model_copy(update={'ward_text': (payload.ward_text or '').strip() or None
                                             if is_ward_source(db, payload.patient_source) else None})

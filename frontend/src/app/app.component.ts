@@ -123,8 +123,14 @@ export class AppComponent implements OnDestroy {
     const item = this.lookupOptions.find(option => option.category === field && option.value === value);
     return String(item?.metadata_json['report_code'] ?? value ?? '');
   }
+  relationshipOptions(draft: PatientClassification): LookupOption[] {
+    const choices: Record<string, string[]> = {family: ['daughter', 'son', 'wife', 'husband'], re: ['mother', 'father', 'mother_in_law', 'father_in_law']};
+    const allowed = choices[this.classificationCode('beneficiary_type', draft.beneficiary_type)] || [];
+    return this.lookup('family_relationship').filter(item => allowed.includes(item.value));
+  }
   classificationChanged(draft: PatientClassification): void {
     const bType = this.classificationCode('beneficiary_type', draft.beneficiary_type);
+    if (!this.relationshipOptions(draft).some(item => item.value === draft.family_relationship)) draft.family_relationship = '';
     if (bType === 'self') {
       draft.entitlement = 'military';
       draft.family_relationship = '';
@@ -133,7 +139,6 @@ export class AppComponent implements OnDestroy {
     } else if (bType === 're') {
       draft.entitlement = 're';
       draft.service_status = '';
-      draft.family_relationship = '';
     } else if (bType === 'cne') {
       draft.entitlement = 'cne';
       draft.service_status = '';
@@ -287,8 +292,11 @@ export class AppComponent implements OnDestroy {
   get summaryMappingChangedCount(): number {
     return this.summaryMappingRows.filter(row => row.category !== this.summaryMappingSaved[row.key]).length;
   }
+  roomUserId(doctorId: string): string {
+    return this.doctors.find(doctor => doctor.id === doctorId)?.room || 'Select a room';
+  }
   get newUserValid(): boolean {
-    return /^[a-zA-Z0-9._-]{2,80}$/.test(this.newUser.username) && this.newUser.full_name.trim().length >= 2
+    return (this.roleProfile(this.newUser.role) === 'radiographer' || (/^[a-zA-Z0-9._-]{2,80}$/.test(this.newUser.username) && this.newUser.full_name.trim().length >= 2))
       && this.newUser.password.length >= 10 && !!this.newUser.role
       && (this.roleProfile(this.newUser.role) !== 'radiographer' || !!this.newUser.doctor_id);
   }
@@ -350,7 +358,7 @@ export class AppComponent implements OnDestroy {
   fieldRequired(key: string): boolean { return this.fieldEnabled(key) && this.requiredFields.includes(key); }
   fieldApplicable(key: string): boolean {
     const bType = this.classificationCode('beneficiary_type', this.form.beneficiary_type);
-    const family = bType === 'family';
+    const family = bType === 'family' || bType === 're';
     const ent = this.classificationCode('entitlement', this.form.entitlement);
     const military = ent === 'military' || (bType === 'self' || bType === 'family');
     if (key === 'entitlement') return false;
@@ -403,6 +411,26 @@ export class AppComponent implements OnDestroy {
   }
   removeRadiographer(doctor: Doctor): void {
     this.api.removeDoctor(doctor.id).subscribe({next: () => {this.reloadDoctors(); this.notify('Room removed; historical records retained');}, error: error => this.message = this.apiErrorMessage(error, 'Could not remove radiographer.')});
+  }
+  suppliesPatient: QueueToken | null = null;
+  suppliesDraft = {film: null as number | null, contrast: null as number | null};
+  suppliesSaving = false;
+  canEditSupplies(token: QueueToken): boolean {
+    return this.hasPermission('queue.supplies.update') && !['cancelled', 'no_show'].includes(token.status)
+      && ((this.currentUser?.access_profile || this.currentUser?.role) !== 'radiographer' || (!!this.currentUser?.doctor_id && token.doctor_id === this.currentUser.doctor_id));
+  }
+  openSupplies(token: QueueToken): void {
+    this.suppliesPatient = token;
+    this.suppliesDraft = {film: token.film ?? null, contrast: token.contrast ?? null};
+    this.message = '';
+  }
+  saveSupplies(): void {
+    if (!this.suppliesPatient || this.suppliesSaving) return;
+    this.suppliesSaving = true;
+    this.api.updateSupplies(this.suppliesPatient.id, this.suppliesDraft).subscribe({
+      next: updated => { this.suppliesSaving = false; this.suppliesPatient = null; if (this.patientDetail?.id === updated.id) this.patientDetail = updated; this.notify('Film and contrast saved'); this.refresh(); },
+      error: error => { this.suppliesSaving = false; this.message = this.apiErrorMessage(error, 'Could not save film and contrast.'); }
+    });
   }
   editWaitingPatient(token: QueueToken): void {
     this.clearServiceSearch();
@@ -735,7 +763,8 @@ export class AppComponent implements OnDestroy {
   createUser(): void {
     if (this.settingsSaving) return;
     if (!this.newUserValid) return;
-    const payload = { ...this.newUser, doctor_id: this.roleProfile(this.newUser.role) === 'radiographer' ? this.newUser.doctor_id || null : null };
+    const roomAccount = this.roleProfile(this.newUser.role) === 'radiographer';
+    const payload = { ...this.newUser, username: roomAccount ? null : this.newUser.username, full_name: roomAccount ? null : this.newUser.full_name, doctor_id: roomAccount ? this.newUser.doctor_id || null : null };
     this.trackSettingsSave(this.api.createUser(payload)).subscribe({
       next: (user) => {
         this.users = [...this.users, user].sort((a, b) => a.username.localeCompare(b.username));

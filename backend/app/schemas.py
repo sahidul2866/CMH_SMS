@@ -169,8 +169,8 @@ class PasswordChange(BaseModel):
 
 
 class UserCreate(BaseModel):
-    username: str = Field(pattern=r"^[a-zA-Z0-9._-]+$", min_length=2, max_length=80)
-    full_name: str = Field(min_length=2, max_length=160)
+    username: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9._-]+$", min_length=1, max_length=80)
+    full_name: str | None = Field(default=None, min_length=2, max_length=160)
     password: str = Field(min_length=10, max_length=200)
     role: str = Field(min_length=2, max_length=30, pattern=r"^[a-z][a-z0-9_-]+$")
     doctor_id: str | None = None
@@ -410,3 +410,9 @@ class ClientDiagnosticBatch(BaseModel):
 
 class MakeAvailableRequest(BaseModel):
     active_token_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class TokenSuppliesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    film: int | None = Field(default=None, ge=0, le=10000, strict=True)
+    contrast: int | None = Field(default=None, ge=0, le=10000, strict=True)
