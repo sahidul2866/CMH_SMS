@@ -18,11 +18,14 @@ FIELDS = {
 }
 
 
+DEFAULT_REQUIRED = ['patient_name', 'rank', 'service_number', 'beneficiary_type', 'patient_source', 'family_relationship']
+
+
 def requirements(db):
     setting = db.get(AppSetting, 'registration_fields')
     value = setting.value if setting else {}
     form_setting = db.get(AppSetting, 'patient_form')
-    return {'appearance': {**FORM_DEFAULTS, **(form_setting.value if form_setting else {})}, 'fields': FIELDS, 'required': value.get('required', ['patient_name', 'family_relationship']),
+    return {'appearance': {**FORM_DEFAULTS, **(form_setting.value if form_setting else {})}, 'fields': FIELDS, 'required': value.get('required', DEFAULT_REQUIRED),
             'enabled': value.get('enabled', list(FIELDS)), 'custom': value.get('custom', [])}
 
 
@@ -74,7 +77,12 @@ def applicable(db, payload, key):
         value = getattr(payload, field, None)
         option = db.scalar(select(LookupOption).where(LookupOption.category == field, LookupOption.value == value)) if value else None
         return (option.metadata_json or {}).get('report_code', value) if option else value
-    family, military = code('beneficiary_type') == 'family', code('entitlement') == 'military'
+    b_type = code('beneficiary_type')
+    ent_code = code('entitlement')
+    family = b_type == 'family'
+    military = (ent_code == 'military' or (b_type in ('self', 'family') and ent_code != 'civil'))
+    if key == 'entitlement':
+        return False
     return {'service_status': military, 'family_relationship': family}.get(key, True)
 
 
@@ -95,15 +103,53 @@ def validate_registration(db, payload, existing=None, check_required=True):
     enabled = set(config['enabled'])
     updates = {}
     for key in FIELDS:
-        if key not in type(payload).model_fields or key in enabled:
+        if key not in type(payload).model_fields or key in enabled or key == 'entitlement':
             continue
         if key in payload.model_fields_set and not blank(getattr(payload, key)):
             raise HTTPException(422, f'{FIELDS[key]} is disabled and cannot accept input')
         updates[key] = getattr(existing, key) if existing else type(payload).model_fields[key].default
     payload = payload.model_copy(update=updates)
+    if hasattr(payload, 'beneficiary_type') and payload.beneficiary_type:
+        from .models import LookupOption
+        from sqlalchemy import select
+        opt = db.scalar(select(LookupOption).where(LookupOption.category == 'beneficiary_type', LookupOption.value == payload.beneficiary_type)) if payload.beneficiary_type else None
+        b_code = (opt.metadata_json or {}).get('report_code', payload.beneficiary_type) if opt else payload.beneficiary_type
+        if hasattr(payload, 'entitlement') and blank(payload.entitlement):
+            inferred = {'self': 'military', 'family': 'military', 're': 're', 'cne': 'cne'}.get(b_code)
+            if inferred:
+                payload = payload.model_copy(update={'entitlement': inferred})
     if hasattr(payload, 'ward_text'):
         payload = payload.model_copy(update={'ward_text': (payload.ward_text or '').strip() or None
                                             if is_ward_source(db, payload.patient_source) else None})
+    if hasattr(payload, 'rank'):
+        other_rank = getattr(payload, 'other_rank', None)
+        if payload.rank == 'other' or (blank(payload.rank) and other_rank):
+            if other_rank and other_rank.strip():
+                from .models import LookupOption
+                from sqlalchemy import select
+                from uuid import uuid4
+                from datetime import datetime
+                raw_label = other_rank.strip()
+                val_slug = re.sub(r'[^a-z0-9._-]+', '_', raw_label.lower()).strip('_') or 'custom_rank'
+                opt = db.scalar(select(LookupOption).where(LookupOption.category == 'rank_relationship', LookupOption.value == val_slug))
+                if not opt:
+                    now = datetime.utcnow()
+                    opt = LookupOption(
+                        id=str(uuid4()),
+                        category='rank_relationship',
+                        value=val_slug,
+                        label=raw_label,
+                        sort_order=100,
+                        is_active=False,
+                        metadata_json={'pending_approval': True, 'report_group': 'or'},
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    db.add(opt)
+                    db.flush()
+                payload = payload.model_copy(update={'rank': val_slug})
+            elif payload.rank == 'other' and check_required and 'rank' in config['required']:
+                raise HTTPException(422, 'Please specify the designation / rank for "Other"')
     missing = [FIELDS[key] for key in config['required'] if key in enabled and key in type(payload).model_fields
                and applicable(db, payload, key) and blank(getattr(payload, key))]
     if missing and check_required:

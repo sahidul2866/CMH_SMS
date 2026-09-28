@@ -187,3 +187,63 @@ def test_classification_metadata_uses_classify_permission_without_settings_permi
     assert options.json()['registration']['enabled']
     client.cookies.clear()
     assert client.get('/api/v1/classification-options').status_code == 401
+
+
+def test_patient_type_unified_workflow_and_summary_reporting():
+    from app.seed import seed
+    seed()
+
+    # Verify classification options contain re and cne in beneficiary_type
+    options = client.get('/api/v1/classification-options').json()
+    b_types = [item['value'] for item in options['lookups'] if item['category'] == 'beneficiary_type']
+    assert 're' in b_types
+    assert 'cne' in b_types
+
+    # 1. Self -> inferred military entitlement -> serving_officer
+    t_self = client.post('/api/v1/tokens', json={
+        'patient_name': 'Capt Self',
+        'beneficiary_type': 'self',
+        'rank': 'captain',
+        'service_status': 'serving'
+    })
+    assert t_self.status_code == 201, t_self.text
+    assert t_self.json()['entitlement'] == 'military'
+    assert t_self.json()['summary_category'] == 'serving_officer'
+
+    # 2. Family -> inferred military entitlement -> family_officer
+    t_family = client.post('/api/v1/tokens', json={
+        'patient_name': 'Wife of Capt',
+        'beneficiary_type': 'family',
+        'rank': 'captain',
+        'service_status': 'serving',
+        'family_relationship': 'spouse'
+    })
+    assert t_family.status_code == 201, t_family.text
+    assert t_family.json()['entitlement'] == 'military'
+    assert t_family.json()['summary_category'] == 'family_officer'
+
+    # 3. RE -> inferred re entitlement -> re column
+    t_re = client.post('/api/v1/tokens', json={
+        'patient_name': 'Mother of Capt',
+        'beneficiary_type': 're'
+    })
+    assert t_re.status_code == 201, t_re.text
+    assert t_re.json()['entitlement'] == 're'
+    assert t_re.json()['summary_category'] == 're'
+
+    # 4. CNE -> inferred cne entitlement -> cne column
+    t_cne = client.post('/api/v1/tokens', json={
+        'patient_name': 'Relative of Capt',
+        'beneficiary_type': 'cne'
+    })
+    assert t_cne.status_code == 201, t_cne.text
+    assert t_cne.json()['entitlement'] == 'cne'
+    assert t_cne.json()['summary_category'] == 'cne'
+
+    # Verify monthly summary report accurately counts each category
+    report = client.get('/api/v1/reports/mri-summary', params={'month': t_self.json()['token_date'][:7]}).json()
+    assert report['totals']['serving_officer'] >= 1
+    assert report['totals']['family_officer'] >= 1
+    assert report['totals']['re'] >= 1
+    assert report['totals']['cne'] >= 1
+

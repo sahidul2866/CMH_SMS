@@ -39,13 +39,13 @@ COLUMNS = [
 GROUPS = [('officer', 'Officers / AFNS'), ('cadet', 'Officer / Nursing cadet'),
           ('jco', 'JCO'), ('or', 'OR / Recruit'), ('nce', 'NCE')]
 CLASSIFICATION_LOOKUPS = {
-    'beneficiary_type': [('self', 'Self'), ('family', 'Family')],
+    'beneficiary_type': [('self', 'Self'), ('family', 'Family'), ('re', 'RE'), ('cne', 'CNE')],
     'service_status': [('serving', 'Serving'), ('retired', 'Retired')],
     'entitlement': [('military', 'Military'), ('civil', 'Civil entitled'), ('re', 'RE'), ('cne', 'CNE')],
     'family_relationship': [('spouse', 'Spouse'), ('child', 'Child'), ('parent', 'Parent'), ('other', 'Other dependent')],
 }
 RANK_GROUPS = dict.fromkeys(['brigadier_general', 'colonel', 'lieutenant_colonel', 'major', 'captain', 'lieutenant', 'officer'], 'officer')
-RANK_GROUPS.update(afns='officer', cadet='cadet', nce='nce', warrant_officer='jco', jco='jco', sergeant='or', corporal='or', shoinik='or', soldier='or')
+RANK_GROUPS.update(afns='officer', cadet='cadet', nce='nce', warrant_officer='jco', jco='jco', sergeant='or', corporal='or', shoinik='or', soldier='or', snk='or')
 router = APIRouter(prefix='/api/v1', tags=['Monthly MRI summary'])
 
 
@@ -178,27 +178,35 @@ def classify(db: Session, payload) -> str | None:
             continue
         option = db.scalar(select(LookupOption).where(LookupOption.category == field, LookupOption.value == value, LookupOption.is_active.is_(True)))
         if not option:
+            if not db.scalar(select(LookupOption.id).where(LookupOption.category == field).limit(1)):
+                values[field] = value
+                continue
             raise HTTPException(422, f'Unknown or inactive {field.replace("_", " ")}')
         values[field] = (option.metadata_json or {}).get('report_code', value)
-    if values['entitlement'] in ('re', 'cne'):
+    if values.get('beneficiary_type') in ('re', 'cne'):
+        cat = values['beneficiary_type']
+        return configured_category(db, cat, cat)
+    if values.get('entitlement') in ('re', 'cne'):
         return configured_category(db, values['entitlement'], values['entitlement'])
-    person = values['beneficiary_type']
+    person = values.get('beneficiary_type')
     if person not in ('self', 'family'):
         return None
-    if person == 'family' and not values['family_relationship']:
+    if person == 'family' and not values.get('family_relationship'):
         return None
-    if values['entitlement'] == 'civil':
+    if values.get('entitlement') == 'civil':
         return configured_category(db, f'civil:{person}', 'family_civil' if person == 'family' else 'serving_civil')
-    if values['entitlement'] != 'military':
+    if values.get('entitlement') and values.get('entitlement') != 'military':
         return None
     rank = getattr(payload, 'rank', None)
-    option = db.scalar(select(LookupOption).where(LookupOption.category == 'rank_relationship', LookupOption.value == rank, LookupOption.is_active.is_(True))) if rank else None
+    option = db.scalar(select(LookupOption).where(LookupOption.category == 'rank_relationship', LookupOption.value == rank)) if rank else None
+    if option and not option.is_active and not (option.metadata_json or {}).get('pending_approval'):
+        option = None
     if person == 'family' and not option:
         if rank:
             raise HTTPException(422, 'Select an active sponsor rank for a military family patient')
         return None
     group = (option.metadata_json or {}).get('report_group') if option else None
-    status = values['service_status']
+    status = values.get('service_status')
     key = f'military:{person}:{status}:{group}'
     fallback = configured_category(db, key, default_military_category(person, status, group))
     return configured_category(db, f'rank:{person}:{status}:{rank}', fallback) if option and status in ('serving', 'retired') else fallback

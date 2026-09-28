@@ -193,3 +193,87 @@ test('rank stays in the single registration control when switching to family and
   app.form.ward_text = 'Ward 7'; app.form.patient_source = 'opd'; app.patientSourceChanged();
   assert.equal(app.form.ward_text, '');
 });
+
+test('patient type merges entitlement choices (Self, Family, RE, CNE) with appropriate field applicability', t => {
+  const {app} = fixture(t);
+  assert.equal(app.fieldApplicable('entitlement'), false);
+
+  // Self
+  app.form.beneficiary_type = 'self';
+  app.classificationChanged(app.form);
+  assert.equal(app.form.entitlement, 'military');
+  assert.equal(app.fieldApplicable('service_status'), true);
+  assert.equal(app.fieldApplicable('family_relationship'), false);
+
+  // Family
+  app.form.beneficiary_type = 'family';
+  app.form.family_relationship = 'spouse';
+  app.form.service_status = 'serving';
+  app.classificationChanged(app.form);
+  assert.equal(app.form.entitlement, 'military');
+  assert.equal(app.fieldApplicable('service_status'), true);
+  assert.equal(app.fieldApplicable('family_relationship'), true);
+
+  // RE
+  app.form.beneficiary_type = 're';
+  app.classificationChanged(app.form);
+  assert.equal(app.form.entitlement, 're');
+  assert.equal(app.form.service_status, '');
+  assert.equal(app.form.family_relationship, '');
+  assert.equal(app.fieldApplicable('service_status'), false);
+  assert.equal(app.fieldApplicable('family_relationship'), false);
+
+  // CNE
+  app.form.beneficiary_type = 'cne';
+  app.classificationChanged(app.form);
+  assert.equal(app.form.entitlement, 'cne');
+  assert.equal(app.form.service_status, '');
+  assert.equal(app.form.family_relationship, '');
+  assert.equal(app.fieldApplicable('service_status'), false);
+  assert.equal(app.fieldApplicable('family_relationship'), false);
+
+  // enabledPayload includes entitlement even if not a standard registration input
+  const payload = app.enabledPayload(app.form);
+  assert.equal(payload.beneficiary_type, 'cne');
+  assert.equal(payload.entitlement, 'cne');
+});
+
+test('reception report filters support date range, contrast used, family, re, and cne', t => {
+  const {app} = fixture(t);
+
+  // Quick filter for contrast used
+  app.setReportQuickFilter('', 'used');
+  assert.equal(app.reportFilters.contrast, 'used');
+  assert.equal(app.hasActiveReportFilters, true);
+  let params = app.receptionReportParams();
+  assert.equal(params.contrast, 'used');
+  assert.equal('beneficiary_type' in params, false);
+
+  // Quick filter for family
+  app.setReportQuickFilter('family', 'used');
+  assert.equal(app.reportFilters.beneficiary_type, 'family');
+  params = app.receptionReportParams();
+  assert.equal(params.beneficiary_type, 'family');
+  assert.equal(params.contrast, 'used');
+
+  // Quick filter for re
+  app.setReportQuickFilter('re', '');
+  assert.equal(app.reportFilters.beneficiary_type, 're');
+  assert.equal(app.reportFilters.contrast, '');
+  params = app.receptionReportParams();
+  assert.equal(params.beneficiary_type, 're');
+  assert.equal('contrast' in params, false);
+
+  // Quick filter for cne
+  app.setReportQuickFilter('cne', '');
+  assert.equal(app.reportFilters.beneficiary_type, 'cne');
+  params = app.receptionReportParams();
+  assert.equal(params.beneficiary_type, 'cne');
+
+  // Reset filters
+  app.resetReportFilters();
+  assert.equal(app.reportFilters.beneficiary_type, '');
+  assert.equal(app.reportFilters.contrast, '');
+  assert.equal(app.hasActiveReportFilters, false);
+});
+
