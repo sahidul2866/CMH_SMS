@@ -253,7 +253,7 @@ class QueueService:
             self.require_assignment_owner(token, doctor)
         transitions = {
             "start": ({"waiting", "called", "recalled"}, "in_progress"),
-            "call_physically": ({"waiting"}, "in_progress"),
+            "call_physically": ({"waiting", "skipped"}, "in_progress"),
             "complete": ({"in_progress"}, "completed"),
             "skip": ({"called", "recalled"}, "skipped"),
             "recall": ({"skipped", "called", "recalled"}, "recalled"),

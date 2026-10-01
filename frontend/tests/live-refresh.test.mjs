@@ -1,5 +1,5 @@
 import '@angular/compiler';
-import { Injector, runInInjectionContext } from '@angular/core';
+import { ElementRef, Injector, runInInjectionContext } from '@angular/core';
 import { build } from 'esbuild';
 import { BehaviorSubject, Subject, defer, of } from 'rxjs';
 import { after, test } from 'node:test';
@@ -15,10 +15,10 @@ const temporary = await mkdtemp(path.join(root, 'node_modules/.live-refresh-test
 after(() => rm(temporary, { recursive: true, force: true }));
 const output = path.join(temporary, 'component.mjs');
 await build({
-  stdin: { contents: `export {ClientLogService} from './src/app/client-log.service'; export {AppComponent} from './src/app/app.component'; export {QueueApiService} from './src/app/queue-api.service'; export {RealtimeService} from './src/app/realtime.service';`, resolveDir: root },
+  stdin: { contents: `export {SearchableSelectComponent} from './src/app/searchable-select.component'; export {ClientLogService} from './src/app/client-log.service'; export {AppComponent} from './src/app/app.component'; export {QueueApiService} from './src/app/queue-api.service'; export {RealtimeService} from './src/app/realtime.service';`, resolveDir: root },
   tsconfig: path.join(root, 'tsconfig.json'), bundle: true, packages: 'external', platform: 'node', format: 'esm', outfile: output,
 });
-const { ClientLogService, AppComponent, QueueApiService, RealtimeService } = await import(pathToFileURL(output));
+const { SearchableSelectComponent, ClientLogService, AppComponent, QueueApiService, RealtimeService } = await import(pathToFileURL(output));
 
 function fixture(t) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: Date.now() });
@@ -277,3 +277,25 @@ test('reception report filters support date range, contrast used, family, re, an
   assert.equal(app.hasActiveReportFilters, false);
 });
 
+
+
+test('rank accepts custom text, retains it on blur, and reuses matching suggestions', () => {
+  const injector = Injector.create({providers: [{provide: ElementRef, useValue: {nativeElement: {}}}]});
+  const control = runInInjectionContext(injector, () => new SearchableSelectComponent());
+  control.allowCustom = true;
+  control.searchOnly = true;
+  control.options = [{value: 'captain', label: 'Captain'}];
+  let saved = '';
+  control.registerOnChange(value => saved = value);
+  control.search('Research Specialist');
+  assert.equal(saved, 'Research Specialist');
+  control.close();
+  assert.equal(control.text, 'Research Specialist');
+  control.options = [{value: 'captain', label: 'Captain'}, {value: 'research_specialist', label: 'Research Specialist'}];
+  control.search('research specialist');
+  assert.equal(saved, 'research_specialist');
+  control.close();
+  assert.equal(control.text, 'Research Specialist');
+  control.search('');
+  assert.equal(saved, '');
+});

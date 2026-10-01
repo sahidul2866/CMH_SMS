@@ -148,16 +148,12 @@
       </ng-template>
     </section>
 
-    <section class="workspace" *ngIf="view === 'reception'">
-      <div class="intro"><div><span class="eyebrow">Patient arrival</span><h2>Live reception queue</h2><p>Monitor waiting patients and add a new patient when required.</p></div><button *ngIf="hasPermission('queue.serial.create')" type="button" class="add-patient" (click)="openRegistration()"><span>＋</span> Add patient</button></div>
-      <div class="reception-list-layout">
         <app-modal [fullscreen]="patientFormAppearance.layout === 'fullscreen'" *ngIf="showReceptionModal && hasPermission('queue.serial.create')" [title]="editingPatientId ? 'Edit waiting patient' : 'Add patient'" [dismissible]="!busy" (closed)="showReceptionModal = false; clearServiceSearch()">
           <form [style.--patient-form-font-size]="patientFormAppearance.font_size + 'px'" class="simple-form registration-form" (ngSubmit)="createToken()">
             <div class="registration-meta"><span>ID no <b>{{ registrationSerial || 'Assigned on save' }}</b></span><span>Date <b>{{ registrationServerDate || registrationDate }}</b></span></div>
             <div class="form-grid">
               <label *ngIf="fieldEnabled('service_number')">Service number / Sponsor service number {{ fieldRequired('service_number') ? '*' : '' }}<input name="serviceNumber" [(ngModel)]="form.service_number" (ngModelChange)="serviceNumberChanged()" autocomplete="off" aria-describedby="service-number-search-status" [ngModelOptions]="{standalone: true}" maxlength="40" autofocus></label>
-              <label *ngIf="fieldEnabled('rank')">{{ registrationIsFamily ? 'Sponsor rank' : 'Designation / Rank' }} {{ fieldRequired('rank') ? '*' : '' }}<app-searchable-select name="rank" [label]="registrationIsFamily ? 'Sponsor rank' : 'Designation / Rank'" placeholder="Search or select rank…" [options]="lookup('rank_relationship')" [(ngModel)]="form.rank" [ngModelOptions]="{standalone: true}"></app-searchable-select></label>
-              <label *ngIf="fieldEnabled('rank') && form.rank === 'other'">Specify designation / rank *<input name="otherRank" [(ngModel)]="form.other_rank" [ngModelOptions]="{standalone: true}" maxlength="120" required placeholder="Enter custom rank or designation"></label>
+              <label *ngIf="fieldEnabled('rank')">{{ registrationIsFamily ? 'Sponsor rank' : 'Designation / Rank' }} {{ fieldRequired('rank') ? '*' : '' }}<app-searchable-select name="rank" [searchOnly]="true" [allowCustom]="true" [required]="fieldRequired('rank')" [label]="registrationIsFamily ? 'Sponsor rank' : 'Designation / Rank'" placeholder="Type to search rank…" [options]="lookup('rank_relationship')" [(ngModel)]="form.rank" [ngModelOptions]="{standalone: true}"></app-searchable-select></label>
               <div class="span-two service-suggestions" *ngIf="serviceSearchOpen" id="service-number-search-status" aria-live="polite">
                 <div class="suggestion-heading"><b>Matching registrations</b><button type="button" class="quiet-button" (click)="clearServiceSearch()">Close suggestions</button></div>
                 <p *ngIf="serviceSearchLoading">Searching…</p><p *ngIf="serviceSearchError" class="field-error">{{ serviceSearchError }}</p>
@@ -197,6 +193,11 @@
           </form>
         </app-modal>
 
+    <section class="workspace" *ngIf="view === 'reception'">
+      <div class="intro"><div><span class="eyebrow">Patient arrival</span><h2>Live reception queue</h2><p>Monitor waiting patients and add a new patient when required.</p></div><button *ngIf="hasPermission('queue.serial.create')" type="button" class="add-patient" (click)="openRegistration()"><span>＋</span> Add patient</button></div>
+      <div class="reception-list-layout">
+
+
         <section class="panel reception-queue" *ngIf="hasPermission('queue.view')">
           <div class="panel-heading"><h3>Waiting patients <span class="count-tag">{{ waiting.length }}</span></h3><button type="button" class="quiet-button" (click)="refresh()">Refresh</button></div>
           <div class="reception-row table-head"><span>ID no</span><span>Patient</span><span>Source / MRI</span><span>Room</span><span>Actions</span></div>
@@ -207,8 +208,8 @@
     </section>
 
     <section class="workspace" *ngIf="view === 'doctor'">
-      <button type="button" class="add-patient" *ngIf="hasPermission('queue.serial.create')" (click)="setView('reception'); openRegistration()">＋ Add patient</button>
-      <section class="panel settings-list" *ngIf="hasPermission('queue.view')"><div class="panel-heading"><h3>Room availability</h3><small>Updates when availability changes</small></div><div class="settings-item" *ngFor="let person of occupancy"><div><b>Room {{ person.room }}</b></div><div class="row-actions"><span class="status-tag" [attr.data-status]="person.occupied ? 'in_progress' : 'completed'">{{ person.occupied ? 'Occupied' : 'Available' }}</span><button type="button" *ngIf="person.occupied && canMakeAvailable(person.id)" [disabled]="!!releasingDoctorId" (click)="makeAvailable(person)" title="Complete the active patient and make this room available">{{ releasingDoctorId === person.id ? 'Updating…' : 'Make available' }}</button><small *ngIf="person.occupied && canMakeAvailable(person.id)">Completes the active patient</small></div></div><p class="field-error" *ngIf="occupancyError">{{ occupancyError }}</p></section>
+      <button type="button" class="add-patient" *ngIf="hasPermission('queue.serial.create')" (click)="doctorOpened = true; refresh(); openRegistration()">＋ Add patient</button>
+      <section class="panel settings-list" *ngIf="hasPermission('queue.view')"><div class="panel-heading"><h3>Room availability</h3><small>Updates when availability changes</small></div><div class="settings-item" *ngFor="let person of occupancy"><div><b>Room {{ person.room }}</b></div><div class="row-actions"><span class="status-tag" [attr.data-status]="person.occupied ? 'in_progress' : 'completed'">{{ person.occupied ? 'Occupied' : 'Available' }}</span><button type="button" *ngIf="person.occupied && canMakeAvailable(person.id)" [disabled]="!!releasingDoctorId" (click)="makeAvailable(person)" title="Free the room and keep the patient available for recall">{{ releasingDoctorId === person.id ? 'Updating…' : 'Make available' }}</button><small *ngIf="person.occupied && canMakeAvailable(person.id)">Patient remains recallable</small></div></div><p class="field-error" *ngIf="occupancyError">{{ occupancyError }}</p></section>
       <ng-container *ngIf="!doctorOpened; else radiographerQueue">
         <div class="intro"><div><h2>Select a room</h2><p>Open a room queue to manage patients.</p></div></div>
         <div class="radiographer-cards"><button type="button" *ngFor="let doctor of doctors" (click)="openDoctor(doctor)"><span class="initial-avatar">{{ doctor.room }}</span><span><b>Room {{ doctor.room }}</b></span><span>→</span></button></div>
@@ -491,7 +492,7 @@
       </ng-container>
       <ng-template #classificationInputs>
         <p>For Self, use the patient’s rank. For Family, use the sponsor’s rank and service status. Incomplete optional details may leave the category as Needs review.</p>
-        <div class="form-grid"><ng-container *ngTemplateOutlet="classificationFields; context: {$implicit: classificationDraft}"></ng-container><label *ngIf="fieldEnabled('rank')">{{ classificationCode('beneficiary_type', classificationDraft.beneficiary_type) === 'family' ? 'Sponsor rank' : 'Patient rank' }} {{ fieldRequired('rank') ? '*' : '' }}<app-searchable-select label="Patient rank" placeholder="Search or select rank…" [options]="lookup('rank_relationship')" [(ngModel)]="classificationDraft.rank" [ngModelOptions]="{standalone: true}"></app-searchable-select></label></div>
+        <div class="form-grid"><ng-container *ngTemplateOutlet="classificationFields; context: {$implicit: classificationDraft}"></ng-container><label *ngIf="fieldEnabled('rank')">{{ classificationCode('beneficiary_type', classificationDraft.beneficiary_type) === 'family' ? 'Sponsor rank' : 'Patient rank' }} {{ fieldRequired('rank') ? '*' : '' }}<app-searchable-select [searchOnly]="true" [allowCustom]="true" label="Patient rank" placeholder="Type to search rank…" [options]="lookup('rank_relationship')" [(ngModel)]="classificationDraft.rank" [ngModelOptions]="{standalone: true}"></app-searchable-select></label></div>
         <div class="classification-notice" *ngIf="disabledClassificationFields.length"><strong>Inputs disabled by your administrator</strong><dl><div *ngFor="let key of disabledClassificationFields"><dt>{{ registrationFields[key] }}</dt><dd>{{ classificationSavedValue(key) }} · saved value retained</dd></div></dl><p>These fields cannot accept new input. You can choose the report category directly above, or ask an administrator to enable them in Patient input fields.</p></div>
         <p class="classification-notice" *ngIf="!lookup('beneficiary_type').length">Some classification dropdowns have no active choices. Ask an administrator to enable them in Dropdown options, or choose a report category directly.</p>
       </ng-template>

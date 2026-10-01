@@ -126,6 +126,17 @@ def validate_registration(db, payload, existing=None, check_required=True):
                                             if is_ward_source(db, payload.patient_source) else None})
     if hasattr(payload, 'rank'):
         other_rank = getattr(payload, 'other_rank', None)
+        from .models import LookupOption
+        from sqlalchemy import select
+        if payload.rank and payload.rank != 'other':
+            entered_rank = payload.rank.strip()
+            ranks = list(db.scalars(select(LookupOption).where(LookupOption.category == 'rank_relationship')))
+            match = next((option for option in ranks if entered_rank.casefold() in {option.value.casefold(), option.label.casefold()}), None)
+            if match:
+                payload = payload.model_copy(update={'rank': match.value})
+            else:
+                other_rank = entered_rank
+                payload = payload.model_copy(update={'rank': 'other'})
         if payload.rank == 'other' or (blank(payload.rank) and other_rank):
             if other_rank and other_rank.strip():
                 from .models import LookupOption
@@ -133,8 +144,11 @@ def validate_registration(db, payload, existing=None, check_required=True):
                 from uuid import uuid4
                 from datetime import datetime
                 raw_label = other_rank.strip()
-                val_slug = re.sub(r'[^a-z0-9._-]+', '_', raw_label.lower()).strip('_') or 'custom_rank'
+                val_slug = (re.sub(r'[^a-z0-9._-]+', '_', raw_label.lower()).strip('_') or 'custom_rank')[:80]
                 opt = db.scalar(select(LookupOption).where(LookupOption.category == 'rank_relationship', LookupOption.value == val_slug))
+                if opt and opt.label.casefold() != raw_label.casefold():
+                    val_slug = val_slug[:47] + '_' + uuid4().hex
+                    opt = None
                 if not opt:
                     now = datetime.utcnow()
                     opt = LookupOption(
@@ -151,8 +165,6 @@ def validate_registration(db, payload, existing=None, check_required=True):
                     db.add(opt)
                     db.flush()
                 payload = payload.model_copy(update={'rank': val_slug})
-            elif payload.rank == 'other' and check_required and 'rank' in config['required']:
-                raise HTTPException(422, 'Please specify the designation / rank for "Other"')
     missing = [FIELDS[key] for key in config['required'] if key in enabled and key in type(payload).model_fields
                and applicable(db, payload, key) and blank(getattr(payload, key))]
     if missing and check_required:

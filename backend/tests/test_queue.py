@@ -1,5 +1,7 @@
 import asyncio
 import os
+
+import pytest
 from datetime import date, datetime, timedelta
 from io import BytesIO
 
@@ -2045,27 +2047,39 @@ def test_browser_diagnostics_are_bounded_authenticated_and_do_not_refresh_queue(
     client_log_limits.clear()
 
 
-def test_make_available_completes_active_patient_audits_and_rejects_stale_click():
+@pytest.mark.parametrize("active_status,priority", [("called", "normal"), ("in_progress", "normal"), ("in_progress", "vip")])
+def test_make_available_keeps_patient_recallable_audits_and_rejects_stale_click(active_status, priority):
     from app.database import SessionLocal
     from app.models import AuditEvent
-    first = client.post('/api/v1/tokens', json=token_payload()).json()
-    client.post(f"/api/v1/doctors/dr-khan/tokens/{first['id']}/call").raise_for_status()
+    first = client.post('/api/v1/tokens', json=token_payload() | {'priority': priority}).json()
+    if priority == "vip":
+        client.post(f"/api/v1/doctors/dr-khan/tokens/{first['id']}/action", json={"action": "call_physically"}).raise_for_status()
+    else:
+        client.post(f"/api/v1/doctors/dr-khan/tokens/{first['id']}/call").raise_for_status()
+    if active_status == 'in_progress' and priority != 'vip':
+        client.post(f"/api/v1/doctors/dr-khan/tokens/{first['id']}/action", json={'action': 'start'}).raise_for_status()
     person = client.get('/api/v1/radiographers/status').json()[0]
     assert person['occupied'] is True
     payload = {'active_token_ids': person['active_token_ids']}
     response = client.post('/api/v1/doctors/dr-khan/make-available', json=payload)
     assert response.status_code == 200, response.text
-    assert response.json()['completed'] == 1
+    assert response.json()['released'] == 1
     assert client.get('/api/v1/radiographers/status').json()[0]['occupied'] is False
     with SessionLocal() as db:
         token = db.get(QueueToken, first['id'])
-        assert token.status == 'completed'
-        assert token.completed_at is not None
+        assert token.status == 'skipped'
+        assert token.completed_at is None
+        assert token.skipped_at is not None
         audit = db.scalar(select(AuditEvent).where(AuditEvent.action == 'queue.availability_reset'))
         assert audit.actor == 'admin'
-        assert audit.previous_status == 'called'
+        assert audit.previous_status == active_status
+        assert audit.new_status == 'skipped'
         assert audit.token_id == first['id']
-    assert client.post('/api/v1/doctors/dr-khan/make-available', json=payload).json()['completed'] == 0
+    assert client.post('/api/v1/doctors/dr-khan/make-available', json=payload).json()['released'] == 0
+    recalled = client.post(f"/api/v1/doctors/dr-khan/tokens/{first['id']}/action", json={'action': 'call_physically' if priority == 'vip' else 'recall'})
+    assert recalled.status_code == 200, recalled.text
+    assert recalled.json()['status'] == ('in_progress' if priority == 'vip' else 'recalled')
+    client.post('/api/v1/doctors/dr-khan/make-available', json=payload).raise_for_status()
     second = client.post('/api/v1/tokens', json=token_payload('Second Patient')).json()
     client.post(f"/api/v1/doctors/dr-khan/tokens/{second['id']}/call").raise_for_status()
     assert client.post('/api/v1/doctors/dr-khan/make-available', json=payload).status_code == 409
@@ -2201,3 +2215,36 @@ def test_room_login_rejects_duplicate_accounts():
     response = client.post('/api/v1/users', json=dict(username='tech_three', full_name='Third tech',
         password='RoomStaff123!', role='radiographer', doctor_id='dr-khan'))
     assert response.status_code == 422
+
+
+def test_typed_rank_is_saved_suggested_and_reused_case_insensitively():
+    from app.database import SessionLocal
+    from app.models import LookupOption
+    with SessionLocal() as db:
+        db.add(LookupOption(category='rank_relationship', value='captain', label='Captain'))
+        db.commit()
+    created = client.post('/api/v1/tokens', json=token_payload() | {'rank': '  Research Specialist  '})
+    assert created.status_code == 201, created.text
+    rank = created.json()['rank']
+    suggestions = client.get('/api/v1/lookups', params={'category': 'rank_relationship'}).json()
+    assert any(item['value'] == rank and item['label'] == 'Research Specialist' for item in suggestions)
+    repeated = client.post('/api/v1/tokens', json=token_payload('Second Patient') | {'rank': 'research specialist'})
+    assert repeated.status_code == 201, repeated.text
+    assert repeated.json()['rank'] == rank
+    edited = client.patch(f"/api/v1/tokens/{created.json()['id']}", json=token_payload() | {'rank': 'Technical Specialist'})
+    assert edited.status_code == 200, edited.text
+    suggestions = client.get('/api/v1/lookups', params={'category': 'rank_relationship'}).json()
+    assert any(item['value'] == edited.json()['rank'] and item['label'] == 'Technical Specialist' for item in suggestions)
+    with SessionLocal() as db:
+        assert len(list(db.scalars(select(LookupOption).where(LookupOption.label == 'Research Specialist')))) == 1
+
+
+def test_other_rank_uses_the_same_single_rank_field():
+    from app.database import SessionLocal
+    from app.models import LookupOption
+    with SessionLocal() as db:
+        db.add(LookupOption(category='rank_relationship', value='other', label='Other'))
+        db.commit()
+    created = client.post('/api/v1/tokens', json=token_payload() | {'rank': 'Other'})
+    assert created.status_code == 201, created.text
+    assert created.json()['rank'] == 'other'

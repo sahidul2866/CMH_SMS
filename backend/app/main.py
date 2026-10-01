@@ -959,25 +959,25 @@ async def make_radiographer_available(doctor_id: str, payload: MakeAvailableRequ
         QueueToken.status.in_(["called", "recalled", "in_progress"])
     ).with_for_update().execution_options(populate_existing=True)).all()
     if not active:
-        return {"completed": 0}
+        return {"released": 0}
     if {token.id for token in active} != set(payload.active_token_ids):
         raise HTTPException(409, "The active patient has changed. Refresh availability and try again.")
     rooms = {token.waiting_room for token in active}
     now = datetime.utcnow()
     for token in active:
         previous = token.status
-        token.status = "completed"
-        token.completed_at = now
+        token.status = "skipped"
+        token.skipped_at = now
         db.add(AuditEvent(action="queue.availability_reset", actor=user.username, token_id=token.id,
-                          previous_status=previous, new_status="completed",
-                          reason="Staff used Make available to finish an active patient",
+                          previous_status=previous, new_status="skipped",
+                          reason="Staff used Make available; patient remains available for recall",
                           detail={"doctor_id": doctor_id}))
     db.commit()
     service = QueueService(db)
     for room in rooms:
         await waiting_room_hub.broadcast(room, "queue.updated", "radiographer.available",
                                          display=service.display(room).model_dump(mode="json"))
-    return {"completed": len(active)}
+    return {"released": len(active)}
 
 
 @app.get("/api/v1/registration/service-number-suggestions")

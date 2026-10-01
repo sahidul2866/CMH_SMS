@@ -210,7 +210,7 @@ export class AppComponent implements OnDestroy {
       ? {mode: 'direct', summary_category: this.classificationCategory === '__review__' ? null : this.classificationCategory}
       : {...this.enabledPayload(this.classificationDraft), mode: 'inputs'};
     this.api.correctClassification(this.classificationTarget.id, payload).subscribe({
-      next: patient => { this.closeClassification(); this.classificationSaving = false; this.patientDetail = patient; this.notify(patient.summary_category ? 'Report classification saved' : 'Saved · report category still needs review'); this.loadMonthlySummary(); this.loadReceptionReport(); this.refresh(); },
+      next: patient => { this.closeClassification(); this.classificationSaving = false; this.patientDetail = patient; this.notify(patient.summary_category ? 'Report classification saved' : 'Saved · report category still needs review'); this.loadLookups(); this.loadMonthlySummary(); this.loadReceptionReport(); this.refresh(); },
       error: error => { this.classificationError = this.apiErrorMessage(error, 'Could not save classification.'); this.classificationSaving = false; }
     });
   }
@@ -245,7 +245,7 @@ export class AppComponent implements OnDestroy {
   showRoleCreator = false;
   newRole = { name: '', display_name: '', access_profile: 'reception', description: '', permissions: [] as string[] };
   newUser = { username: '', full_name: '', password: '', role: 'reception', doctor_id: '' };
-  form = { beneficiary_type: '', service_status: '', entitlement: '', family_relationship: '', patient_title: '', patient_name: '', patient_name_bn: '', patient_phone: '', service_category: 'civilian', rank: '', other_rank: '', service_number: '', priority: 'normal', age: null as number | null, unit: '', mri_area: '', contrast: null as number | null, film: null as number | null, report: '', patient_source: '', ward_text: '' };
+  form = { beneficiary_type: '', service_status: '', entitlement: '', family_relationship: '', patient_title: '', patient_name: '', patient_name_bn: '', patient_phone: '', service_category: 'civilian', rank: '', service_number: '', priority: 'normal', age: null as number | null, unit: '', mri_area: '', contrast: null as number | null, film: null as number | null, report: '', patient_source: '', ward_text: '' };
   registrationSerial = '';
   registrationServerDate = '';
   userSettingsSearch = '';
@@ -379,7 +379,7 @@ export class AppComponent implements OnDestroy {
     this.releasingDoctorId = person.id;
     this.occupancyError = '';
     this.api.makeAvailable(person.id, person.active_token_ids).subscribe({
-      next: () => { this.releasingDoctorId = ''; this.notify('Active patient completed · Room available'); this.refresh(); },
+      next: () => { this.releasingDoctorId = ''; this.notify('Room available · Patient can be recalled'); this.refresh(); },
       error: error => { this.releasingDoctorId = ''; this.occupancyError = this.apiErrorMessage(error, 'Could not make radiographer available.'); this.refresh(); },
     });
   }
@@ -460,7 +460,6 @@ export class AppComponent implements OnDestroy {
       this.form.service_category = 'civilian'; this.form.priority = 'normal';
     }
     this.editingPatientId = '';
-    this.form.other_rank = '';
     this.loadLookups();
     this.message = '';
     this.showReceptionModal = true;
@@ -948,7 +947,6 @@ export class AppComponent implements OnDestroy {
     const bengaliName = this.form.patient_name_bn.trim();
     if (bengaliName && (!/^[\u0980-\u09ff\s.,।'’()\-\u200c\u200d]+$/u.test(bengaliName) || !/[\u0985-\u09b9\u09ce\u09dc-\u09e1\u09f0\u09f1]/u.test(bengaliName))) missing.push('Bengali letters for the announcement name');
     for (const key of this.requiredFields.filter(key => this.fieldEnabled(key) && this.fieldApplicable(key))) { const value = (this.form as any)[key]; if (value === null || value === undefined || String(value).trim() === '') missing.push(this.registrationFields[key] || key); }
-    if (this.fieldEnabled('rank') && this.fieldApplicable('rank') && this.form.rank === 'other' && !this.form.other_rank.trim()) missing.push('specified designation / rank');
     if ((['age', 'contrast', 'film'] as const).filter(key => this.fieldEnabled(key)).map(key => this.form[key]).some(value => value !== null && (!Number.isInteger(value) || value < 0)) || (this.fieldEnabled('age') && this.form.age !== null && this.form.age > 150)) missing.push('valid age, contrast and film numbers');
     return missing;
   }
@@ -1137,7 +1135,6 @@ export class AppComponent implements OnDestroy {
       patient_name: patientName,
       patient_phone: this.form.patient_phone.trim(),
       rank: this.form.rank || '',
-      other_rank: this.form.rank === 'other' ? this.form.other_rank.trim() : null,
       service_number: this.form.service_number.trim(),
       doctor_id: null,
       doctor_name: '',
@@ -1158,7 +1155,6 @@ export class AppComponent implements OnDestroy {
         this.resetBengaliSuggestion();
         this.form.patient_phone = '';
         this.form.rank = '';
-        this.form.other_rank = '';
         this.form.service_number = '';
         this.form.age = this.form.contrast = this.form.film = null;
         this.form.unit = this.form.mri_area = this.form.report = this.form.patient_source = this.form.ward_text = '';
@@ -1204,7 +1200,7 @@ export class AppComponent implements OnDestroy {
   }
 
   lookup(category: string, activeOnly = true): LookupOption[] {
-    return this.lookupOptions.filter((item) => item.category === category && (!activeOnly || item.is_active))
+    return this.lookupOptions.filter((item) => item.category === category && (!activeOnly || item.is_active || (category === 'rank_relationship' && item.metadata_json?.['pending_approval'])))
       .sort((a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label));
   }
 
@@ -1639,7 +1635,7 @@ export class AppComponent implements OnDestroy {
     if (!this.hasPermission('queue.action')) return false;
     if (['call_physically', 'start', 'recall'].includes(action) && !this.canManageAssignment(token)) return false;
     const states: Record<string, string[]> = { start: ['called', 'recalled'], complete: ['in_progress'], skip: ['called', 'recalled'], recall: ['skipped', 'called', 'recalled'], no_show: ['called', 'recalled', 'skipped'], cancel: ['waiting', 'called', 'recalled', 'skipped', 'in_progress'] };
-    if (action === 'call_physically') return token.priority === 'vip' && token.status === 'waiting';
+    if (action === 'call_physically') return token.priority === 'vip' && ['waiting', 'skipped'].includes(token.status);
     return states[action]?.includes(token.status) || false;
   }
 
