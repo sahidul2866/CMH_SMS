@@ -1264,7 +1264,7 @@ def test_mri_report_columns_and_text_are_exported_safely():
     client.post('/api/v1/tokens', json=payload).raise_for_status()
     exported = client.get('/api/v1/reports/reception.xlsx')
     sheet = load_workbook(BytesIO(exported.content))['Reception Desk']
-    assert [cell.value for cell in sheet[1]][:12] == ['Serial', 'Date', 'Service No./BA', 'Designation / Rank', 'Name', 'Age', 'Unit', 'MRI Area', 'Contrast', 'Film', 'Report', 'Patient Source']
+    assert [cell.value for cell in sheet[1]][:12] == ['ID No', 'Date', 'Service No./BA', 'Rank', 'Name', 'Age', 'Unit', 'MRI Area', 'Contrast', 'Film', 'Report', 'Patient Source']
     assert sheet['K2'].value == '=1+1' and sheet['K2'].data_type == 's'
     assert sheet['I2'].value == 0 and sheet['J2'].value == 2
 
@@ -1280,6 +1280,7 @@ def test_startup_seed_preserves_admin_dropdown_rooms_and_console_settings(monkey
         rank.label, rank.is_active, rank.metadata_json = 'Custom General', False, {'priority': 'normal'}
         db.get(Doctor, 'dr-khan').room_number = '999'
         db.get(AppSetting, 'display').value = {'privacy_mode': 'full', 'next_token_count': 8}
+        db.add(AppSetting(key='patient_form', value={'layout': 'fullscreen', 'font_size': 22}, description='Custom form'))
         db.commit()
     seed()
     with SessionLocal() as db:
@@ -1288,6 +1289,7 @@ def test_startup_seed_preserves_admin_dropdown_rooms_and_console_settings(monkey
         assert rank.metadata_json == {'priority': 'normal'}
         assert db.get(Doctor, 'dr-khan').room_number == '999'
         assert db.get(AppSetting, 'display').value['next_token_count'] == 8
+        assert db.get(AppSetting, 'patient_form').value == {'layout': 'fullscreen', 'font_size': 22}
 
 
 def test_idle_claim_and_dashboard_details_respect_radiographer_scope():
@@ -1571,7 +1573,11 @@ def test_radiographer_management_and_role_logins():
         assert client.post('/api/v1/admin/doctors', json={**new_doctor, 'id': 'unauthorized'}).status_code == 403
         assert client.delete('/api/v1/admin/doctors/second-radio').status_code == 403
         assert client.put('/api/v1/registration-fields', json={'value': {'required': ['patient_name']}}).status_code == 403
-        assert client.get('/api/v1/reports/mri-summary', params={'date_from': date.today().isoformat(), 'date_to': date.today().isoformat()}).status_code == (200 if role in ['head_of_dept', 'auditor'] else 403)
+        can_view_reports = role in ['radiographer', 'head_of_dept', 'auditor']
+        assert client.get('/api/v1/reports/mri-summary', params={'date_from': date.today().isoformat(), 'date_to': date.today().isoformat()}).status_code == (200 if can_view_reports else 403)
+        assert client.get('/api/v1/reports/reception').status_code == (200 if can_view_reports else 403)
+        assert client.get('/api/v1/reports/reception.xlsx').status_code == (200 if can_view_reports else 403)
+        assert client.get('/api/v1/reports/reception.pdf').status_code == (200 if can_view_reports else 403)
         if role == 'reception':
             waiting = client.post('/api/v1/tokens', json=token_payload()).json()
             assert client.patch(f"/api/v1/tokens/{waiting['id']}", json=token_payload('Reception correction')).status_code == 200
@@ -2096,7 +2102,7 @@ def test_make_available_keeps_patient_recallable_audits_and_rejects_stale_click(
 def test_patient_form_appearance_defaults_persists_and_validates():
     from app.database import SessionLocal
     defaults = client.get('/api/v1/registration-fields').json()['appearance']
-    assert defaults == {'layout': 'modal', 'font_size': 14}
+    assert defaults == {'layout': 'modal', 'font_size': 18}
     settings = client.get('/api/v1/settings').json()
     assert next(row['value'] for row in settings if row['key'] == 'patient_form') == defaults
     response = client.put('/api/v1/settings/patient_form', json={'value': {'layout': 'fullscreen', 'font_size': 22}})

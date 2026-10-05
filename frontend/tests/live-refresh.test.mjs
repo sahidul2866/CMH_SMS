@@ -62,6 +62,24 @@ test('connected idle screen and heartbeat events issue no periodic HTTP requests
   assert.deepEqual(counts, before);
 });
 
+test('required-field state validates live values and completed supplies are admin-only', t => {
+  const {app} = fixture(t);
+  assert.equal(app.patientFormAppearance.font_size, 18);
+  assert.equal(app.requiredFieldInvalid('patient_name', ''), true);
+  assert.equal(app.requiredFieldInvalid('patient_name', 'A'), true);
+  assert.equal(app.requiredFieldInvalid('patient_name', 'AB'), false);
+  assert.equal(app.requiredFieldInvalid('film', null), true);
+  assert.equal(app.requiredFieldInvalid('film', 0), false);
+  assert.equal(app.requiredFieldInvalid('film', -1), true);
+  app.currentUser = {id: 'staff', username: 'staff', role: 'radiographer', access_profile: 'radiographer', doctor_id: 'doctor', permissions: ['queue.supplies.update']};
+  assert.equal(app.canEditSupplies({status: 'in_progress', doctor_id: 'doctor'}), true);
+  assert.equal(app.canEditSupplies({status: 'completed', doctor_id: 'doctor'}), false);
+  app.currentUser.permissions.push('pages.reports', 'reports.view');
+  assert.equal(app.canView('reception-report'), true);
+  app.currentUser = {id: 'admin', username: 'admin', role: 'admin', access_profile: 'admin', permissions: ['*']};
+  assert.equal(app.canEditSupplies({status: 'completed', doctor_id: 'doctor'}), true);
+});
+
 test('event bursts refresh once; hidden tabs catch up once on return', t => {
   const {app, counts, events} = fixture(t);
   for (let i = 0; i < 20; i++) events.next({type: 'data.changed', topics: ['queue']});

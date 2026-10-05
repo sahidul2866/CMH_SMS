@@ -6,13 +6,13 @@ import re
 from fastapi import HTTPException
 from .models import AppSetting
 
-FORM_DEFAULTS = {'layout': 'modal', 'font_size': 14}
+FORM_DEFAULTS = {'layout': 'modal', 'font_size': 18}
 
 FIELDS = {
     'patient_name': 'Name', 'patient_phone': 'Contact number', 'patient_source': 'Patient source',
     'service_number': 'Service No./BA', 'age': 'Age', 'unit': 'Unit',
     'mri_area': 'Area of body for MRI', 'contrast': 'Contrast', 'film': 'Film', 'report': 'Report',
-    'rank': 'Designation / Rank', 'priority': 'Patient priority',
+    'rank': 'Rank', 'priority': 'Patient priority',
     'beneficiary_type': 'Patient type', 'entitlement': 'Entitlement', 'service_status': 'Service status',
     'family_relationship': 'Family relationship',
 }

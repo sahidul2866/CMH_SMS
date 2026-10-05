@@ -26,7 +26,8 @@ LEGACY_ROLE_PERMISSIONS = {
     },
     "radiographer": {
         "pages.reception", "queue.serial.create", "queue.supplies.update",
-        "pages.radiographer", "pages.dashboard", "dashboard.view", "directory.view", "master_data.view", "queue.view",
+        "pages.radiographer", "pages.dashboard", "pages.reports", "dashboard.view", "reports.view",
+        "directory.view", "master_data.view", "queue.view",
         "queue.call", "queue.action", "queue.pause", "audio.announce",
     },
     "radiography_head": {

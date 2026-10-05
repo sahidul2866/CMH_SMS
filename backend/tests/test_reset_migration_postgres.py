@@ -44,8 +44,12 @@ def test_reset_postgres_with_invalid_history_duplicates_and_rollback():
                 assert reset.returncode == 0, reset.stdout + reset.stderr
                 with engine.connect() as db:
                     assert set(db.execute(text("SELECT username FROM users WHERE role='radiographer'")).scalars()) == {'110', '104', '116', '117'}
+                    radiographer_permissions = db.execute(text(
+                        "SELECT permissions FROM role_definitions WHERE name='radiographer'"
+                    )).scalar_one()
+                    assert {'pages.reports', 'reports.view'} <= set(radiographer_permissions)
                     assert db.execute(text('SELECT count(*) FROM queue_tokens')).scalar() == 0
-                    assert db.execute(text('SELECT version_num FROM alembic_version')).scalar() == '20260928_0034'
+                    assert db.execute(text('SELECT version_num FROM alembic_version')).scalar() == '20261005_0035'
             with engine.begin() as db:
                 db.execute(text("CREATE TABLE retained_on_failure (value text)"))
                 db.execute(text("INSERT INTO retained_on_failure VALUES ('keep')"))

@@ -22,9 +22,13 @@ def run_reset(path, directory, *arguments, **extra):
 
 def verify_defaults(path):
     with sqlite3.connect(path) as db:
-        assert db.execute('SELECT version_num FROM alembic_version').fetchall() == [('20260928_0034',)]
+        assert db.execute('SELECT version_num FROM alembic_version').fetchall() == [('20261005_0035',)]
         assert set(db.execute('SELECT room_number, name FROM doctors')) == {(n, f'Room {n}') for n in ('110', '104', '116', '117')}
         assert set(db.execute("SELECT username FROM users WHERE role='radiographer'")) == {(n,) for n in ('110', '104', '116', '117')}
+        radiographer_permissions = json.loads(db.execute(
+            "SELECT permissions FROM role_definitions WHERE name='radiographer'"
+        ).fetchone()[0])
+        assert {'pages.reports', 'reports.view'} <= set(radiographer_permissions)
         assert db.execute('SELECT count(*) FROM users').fetchone()[0] == 9
         assert db.execute('SELECT count(*) FROM users WHERE must_change_password=1').fetchone()[0] == 9
         assert set(db.execute("SELECT value FROM lookup_options WHERE category='family_relationship'")) == {(n,) for n in ('daughter','son','wife','husband','mother','father','mother_in_law','father_in_law')}

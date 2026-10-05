@@ -254,12 +254,14 @@
         "pages.dashboard",
         "pages.radiographer",
         "pages.reception",
+        "pages.reports",
         "queue.action",
         "queue.call",
         "queue.pause",
         "queue.serial.create",
         "queue.supplies.update",
-        "queue.view"
+        "queue.view",
+        "reports.view"
       ],
       "description": "Built-in role",
       "is_system": true
@@ -1041,7 +1043,7 @@
     },
     "patient_form": {
       "layout": "modal",
-      "font_size": 14
+      "font_size": 18
     },
     "mri_summary_mapping": {
       "re": "re",

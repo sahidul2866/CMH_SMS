@@ -309,7 +309,7 @@ export class AppComponent implements OnDestroy {
   }
   requiredFields = ['patient_name', 'rank', 'service_number', 'beneficiary_type', 'patient_source', 'family_relationship'];
   enabledFields: string[] = [];
-  patientFormAppearance = {layout: 'modal', font_size: 14};
+  patientFormAppearance = {layout: 'modal', font_size: 18};
   registrationFieldsLoaded = false;
   registrationFields: Record<string, string> = {};
   requiredDraft: Record<string, boolean> = {};
@@ -321,7 +321,7 @@ export class AppComponent implements OnDestroy {
   newCustomType: CustomRegistrationField['type'] = 'text';
   newCustomOptions = '';
   private applyRegistrationFields(data: RegistrationFields): void {
-    this.patientFormAppearance = data.appearance ?? {layout: 'modal', font_size: 14};
+    this.patientFormAppearance = data.appearance ?? {layout: 'modal', font_size: 18};
     this.requiredFields = data.required; this.enabledFields = data.enabled ?? Object.keys(data.fields);
     this.registrationFields = data.fields; this.customFields = data.custom ?? [];
     this.customDraft = JSON.parse(JSON.stringify(this.customFields));
@@ -356,6 +356,19 @@ export class AppComponent implements OnDestroy {
   }
   fieldEnabled(key: string): boolean { return this.registrationFieldsLoaded && this.enabledFields.includes(key); }
   fieldRequired(key: string): boolean { return this.fieldEnabled(key) && this.requiredFields.includes(key); }
+  requiredFieldInvalid(key: string, value: unknown): boolean {
+    if (value === null || value === undefined || String(value).trim() === '') return true;
+    if (key === 'patient_name') return String(value).trim().length < 2;
+    if (['age', 'contrast', 'film'].includes(key)) {
+      return typeof value !== 'number' || !Number.isInteger(value) || value < 0 || (key === 'age' && value > 150);
+    }
+    return false;
+  }
+  customRequiredFieldInvalid(field: CustomRegistrationField): boolean {
+    const value = this.customValues[field.key];
+    if (value === null || value === undefined || String(value).trim() === '') return true;
+    return field.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value));
+  }
   fieldApplicable(key: string): boolean {
     const bType = this.classificationCode('beneficiary_type', this.form.beneficiary_type);
     const family = bType === 'family' || bType === 're';
@@ -417,6 +430,7 @@ export class AppComponent implements OnDestroy {
   suppliesSaving = false;
   canEditSupplies(token: QueueToken): boolean {
     return this.hasPermission('queue.supplies.update') && !['cancelled', 'no_show'].includes(token.status)
+      && (token.status !== 'completed' || this.isAdmin)
       && ((this.currentUser?.access_profile || this.currentUser?.role) !== 'radiographer' || (!!this.currentUser?.doctor_id && token.doctor_id === this.currentUser.doctor_id));
   }
   openSupplies(token: QueueToken): void {
@@ -466,7 +480,7 @@ export class AppComponent implements OnDestroy {
     this.registrationSerial = '';
     this.api.registrationPreview().subscribe({
       next: preview => { this.registrationSerial = preview.serial_number; this.registrationServerDate = preview.date; },
-      error: () => { this.message = 'ID no will be assigned when saved.'; },
+      error: () => { this.message = 'ID Number will be assigned when saved.'; },
     });
   }
   bengaliSuggestionLoading = false;
@@ -685,8 +699,7 @@ export class AppComponent implements OnDestroy {
   }
 
   get isAdmin(): boolean {
-    return (this.currentUser?.access_profile || this.currentUser?.role) === 'admin'
-      || !!this.currentUser?.permissions?.includes('settings.manage');
+    return (this.currentUser?.access_profile || this.currentUser?.role) === 'admin';
   }
 
   hasPermission(permission: string): boolean {
@@ -1269,7 +1282,7 @@ export class AppComponent implements OnDestroy {
     });
   }
   lookupCategoryLabel(category: string): string {
-    return ({ rank_relationship: 'Designation / Rank', patient_source: 'Patient source (OPD / Ward)', room_number: 'Room numbers', priority_category: 'Patient priority' } as Record<string,string>)[category] || category.replaceAll('_', ' ');
+    return ({ rank_relationship: 'Rank', patient_source: 'Patient source (OPD / Ward)', room_number: 'Room numbers', priority_category: 'Patient priority' } as Record<string,string>)[category] || category.replaceAll('_', ' ');
   }
 
   callNext(): void {
@@ -1821,7 +1834,7 @@ export class AppComponent implements OnDestroy {
   }
   exportTodayReport(): void {
     this.reportFilters = { date_from: this.registrationDate, date_to: this.registrationDate, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '' };
-    this.loadReceptionReport(); this.exportReceptionReport();
+    this.loadReceptionReport(); this.exportReceptionReportPdf();
   }
 
   dismissMessage(): void { this.message = ''; }

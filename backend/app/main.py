@@ -1005,6 +1005,8 @@ def update_token_supplies(token_id: str, payload: TokenSuppliesUpdate,
         raise HTTPException(404, "Patient not found")
     if user_access_profile(user, db) == 'radiographer' and (not user.doctor_id or token.doctor_id != user.doctor_id):
         raise HTTPException(403, "Only patients assigned to your room can be updated")
+    if token.status == 'completed' and user_access_profile(user, db) != 'admin':
+        raise HTTPException(403, "Only administrators can update film and contrast for completed patients")
     if token.status in ('cancelled', 'no_show'):
         raise HTTPException(409, "Cannot update a cancelled or absent patient")
     changes = payload.model_dump(exclude_unset=True)
@@ -1739,6 +1741,10 @@ def queue_report(_: User = Depends(require_permission("reports.view")), db: Sess
     }
 
 
+RECEPTION_ID_HEADER = "ID No"
+RECEPTION_RANK_HEADER = "Rank"
+
+
 def reception_report_query(
     db: Session,
     date_from: date,
@@ -1825,7 +1831,7 @@ def reception_report_excel(
     def label(category, value):
         return labels.get((category, value), value or "")
     headers = [
-        "Serial", "Date", "Service No./BA", "Designation / Rank", "Name", "Age", "Unit",
+        RECEPTION_ID_HEADER, "Date", "Service No./BA", RECEPTION_RANK_HEADER, "Name", "Age", "Unit",
         "MRI Area", "Contrast", "Film", "Report", "Patient Source", "Priority", "Room", "Radiographer", "Status",
         "Created At", "Called At", "Service Started At", "Completed At", "Cancelled At", "Skipped At",
         "Recalled At", "No Show At", "Scheduled At", "Recall Count", "Mobile Number", "Service Category",
@@ -1916,7 +1922,10 @@ def reception_report_pdf(
         Paragraph(subtitle, styles["Normal"]),
         Spacer(1, 4 * mm),
     ]
-    headers = ["Serial", "Date", "Service No./BA", "Designation", "Type", "Name", "Age", "Unit", "MRI area", "Contrast", "Film", "Report", "Patient source", "Priority / Room"]
+    headers = [
+        RECEPTION_ID_HEADER, "Date", "Service No./BA", RECEPTION_RANK_HEADER, "Type", "Name", "Age", "Unit",
+        "MRI area", "Contrast", "Film", "Report", "Patient source", "Priority / Room",
+    ]
     rows = [headers]
     cell_style = styles["BodyText"].clone("RegisterCell")
     cell_style.fontSize = 6.5
