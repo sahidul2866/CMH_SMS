@@ -30,3 +30,17 @@ def test_radiographer_registers_and_records_film_contrast_for_own_room():
         user.doctor_id = None
         db.commit()
     assert client.patch(url, json={'film':4}).status_code == 403
+    with SessionLocal() as db:
+        user = db.query(User).filter_by(username='205').one()
+        user.doctor_id = 'dr-khan'
+        db.commit()
+    client.post(f"/api/v1/doctors/dr-khan/tokens/{own['id']}/action", json={'action': 'start'}).raise_for_status()
+    client.post(f"/api/v1/doctors/dr-khan/tokens/{own['id']}/action", json={'action': 'complete'}).raise_for_status()
+    completed_edit = client.patch(url, json={'film': 5, 'contrast': 2})
+    assert completed_edit.status_code == 403
+    assert completed_edit.json()['detail'] == 'Only administrators can update film and contrast for completed patients'
+    client.cookies.clear()
+    client.post('/api/v1/auth/login', json={'username': 'admin', 'password': 'AdminPass123!'}).raise_for_status()
+    admin_edit = client.patch(url, json={'film': 5, 'contrast': 2})
+    assert admin_edit.status_code == 200
+    assert admin_edit.json()['film'] == 5 and admin_edit.json()['contrast'] == 2

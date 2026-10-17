@@ -15,10 +15,10 @@ const temporary = await mkdtemp(path.join(root, 'node_modules/.live-refresh-test
 after(() => rm(temporary, { recursive: true, force: true }));
 const output = path.join(temporary, 'component.mjs');
 await build({
-  stdin: { contents: `export {SearchableSelectComponent} from './src/app/searchable-select.component'; export {ClientLogService} from './src/app/client-log.service'; export {AppComponent} from './src/app/app.component'; export {QueueApiService} from './src/app/queue-api.service'; export {RealtimeService} from './src/app/realtime.service';`, resolveDir: root },
+  stdin: { contents: `export {BrowserAudioService} from './src/app/browser-audio.service'; export {SearchableSelectComponent} from './src/app/searchable-select.component'; export {ClientLogService} from './src/app/client-log.service'; export {AppComponent} from './src/app/app.component'; export {QueueApiService} from './src/app/queue-api.service'; export {RealtimeService} from './src/app/realtime.service';`, resolveDir: root },
   tsconfig: path.join(root, 'tsconfig.json'), bundle: true, packages: 'external', platform: 'node', format: 'esm', outfile: output,
 });
-const { SearchableSelectComponent, ClientLogService, AppComponent, QueueApiService, RealtimeService } = await import(pathToFileURL(output));
+const { BrowserAudioService, SearchableSelectComponent, ClientLogService, AppComponent, QueueApiService, RealtimeService } = await import(pathToFileURL(output));
 
 function fixture(t) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: Date.now() });
@@ -46,7 +46,7 @@ function fixture(t) {
   const events = new Subject();
   const status = new BehaviorSubject('connected');
   const realtime = {status$: status, connect: () => events};
-  const injector = Injector.create({providers: [{provide: ClientLogService, useValue: {navigation() {}, record() {}}}, {provide: QueueApiService, useValue: api}, {provide: RealtimeService, useValue: realtime}]});
+  const injector = Injector.create({providers: [{provide: BrowserAudioService, useValue: {enabled: false, disable() {}}}, {provide: ClientLogService, useValue: {navigation() {}, record() {}}}, {provide: QueueApiService, useValue: api}, {provide: RealtimeService, useValue: realtime}]});
   const app = runInInjectionContext(injector, () => new AppComponent());
   t.after(() => { app.ngOnDestroy(); injector.destroy(); });
   events.next({type: 'connection.ready'});
@@ -60,6 +60,24 @@ test('connected idle screen and heartbeat events issue no periodic HTTP requests
   const before = {...counts};
   for (let i = 0; i < 8; i++) { events.next({type: 'heartbeat'}); t.mock.timers.tick(15000); }
   assert.deepEqual(counts, before);
+});
+
+test('required-field state validates live values and completed supplies are admin-only', t => {
+  const {app} = fixture(t);
+  assert.equal(app.patientFormAppearance.font_size, 18);
+  assert.equal(app.requiredFieldInvalid('patient_name', ''), true);
+  assert.equal(app.requiredFieldInvalid('patient_name', 'A'), true);
+  assert.equal(app.requiredFieldInvalid('patient_name', 'AB'), false);
+  assert.equal(app.requiredFieldInvalid('film', null), true);
+  assert.equal(app.requiredFieldInvalid('film', 0), false);
+  assert.equal(app.requiredFieldInvalid('film', -1), true);
+  app.currentUser = {id: 'staff', username: 'staff', role: 'radiographer', access_profile: 'radiographer', doctor_id: 'doctor', permissions: ['queue.supplies.update']};
+  assert.equal(app.canEditSupplies({status: 'in_progress', doctor_id: 'doctor'}), true);
+  assert.equal(app.canEditSupplies({status: 'completed', doctor_id: 'doctor'}), false);
+  app.currentUser.permissions.push('pages.reports', 'reports.view');
+  assert.equal(app.canView('reception-report'), true);
+  app.currentUser = {id: 'admin', username: 'admin', role: 'admin', access_profile: 'admin', permissions: ['*']};
+  assert.equal(app.canEditSupplies({status: 'completed', doctor_id: 'doctor'}), true);
 });
 
 test('event bursts refresh once; hidden tabs catch up once on return', t => {
