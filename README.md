@@ -140,6 +140,13 @@ restore physical Python/server playback. `CMH_SMS_AUDIO_ENABLED=false` disables
 both modes. Health at `/api/v1/health` reports the output and generation errors;
 `delivered_count` counts browser deliveries, not verified speaker playback.
 
+Use **Settings → Console settings → Announcement → Test audio & diagnose** to
+run a tracked test. The result shows voice generation, browser confirmation or
+server playback, exact reported errors, and neural-to-basic voice fallback
+warnings. A completed test confirms software playback, not that the physical
+speaker was audible. Diagnostics are kept in memory (up to 50 tests) and expire
+on server restart.
+
 ## Database commands
 
 Run from `backend/` after the environment has been created:

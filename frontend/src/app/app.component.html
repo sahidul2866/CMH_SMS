@@ -436,7 +436,14 @@
               <label>Repeat count<input type="number" min="1" max="3" [(ngModel)]="setting.value['repeat_count']" [ngModelOptions]="{standalone: true}"></label>
               <label>Speech rate<input type="number" min="0.5" max="1.5" step="0.05" [(ngModel)]="setting.value['rate']" [ngModelOptions]="{standalone: true}"></label>
               <label>Volume<input type="number" min="0" max="1" step="0.1" [(ngModel)]="setting.value['volume']" [ngModelOptions]="{standalone: true}"></label>
-              <button type="button" class="voice-test" (click)="testAnnouncement(setting)" [disabled]="audioTestBusy || announcementMode(setting) === 'off'">{{ audioTestBusy ? 'Queuing test…' : '🔊 Test selected voice' }}</button>
+              <button type="button" class="voice-test" (click)="testAnnouncement(setting)" [disabled]="audioTestBusy">{{ audioTestBusy ? 'Testing audio…' : '🔊 Test audio & diagnose' }}</button>
+              <div *ngIf="audioDiagnostic as diagnostic" class="audio-diagnostic" role="status" aria-live="polite">
+                <strong>{{ diagnostic.phase === 'completed' ? 'Playback completed' : diagnostic.phase === 'failed' ? 'Audio test failed' : diagnostic.phase === 'cancelled' ? 'Test cancelled' : 'Testing: ' + diagnostic.phase }}</strong>
+                <p>{{ diagnostic.detail }}</p>
+                <p *ngFor="let warning of diagnostic.warnings">{{ warning }}</p>
+                <small *ngIf="diagnostic.output">Output: {{ diagnostic.output }}. This browser: {{ browserAudio.enabled ? browserAudio.status : 'sound muted; another enabled browser or the server will play' }}.</small>
+                <p *ngIf="diagnostic.phase === 'completed'">Did you hear the test? Software cannot verify physical speaker sound. If you heard nothing, check the selected output, mute/volume, speaker connection and amplifier.</p>
+              </div>
             </div>
           </ng-container>
 <div class="form-footer"><button type="button" class="settings-button" (click)="editor = ''" [disabled]="settingsSaving">Cancel</button><button type="submit" class="primary" [disabled]="settingsSaving">{{ settingsSaving ? 'Saving…' : 'Save settings' }}</button></div></fieldset></form></app-modal>

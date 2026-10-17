@@ -317,3 +317,19 @@ test('rank accepts custom text, retains it on blur, and reuses matching suggesti
   control.search('');
   assert.equal(saved, '');
 });
+
+test('audio diagnostic button waits for this test result and displays the reported failure', t => {
+  const {app, responses, counts} = fixture(t);
+  responses.testAnnouncement = {test_id: 'new-test', phase: 'queued', output: 'browser', detail: 'Queued'};
+  responses.audioDiagnostic = {test_id: 'new-test', phase: 'failed', output: 'browser', detail: 'Browser playback failed: EncodingError: unsupported format'};
+  app.audioDiagnostic = {test_id: 'old-test', phase: 'failed', output: 'server', detail: 'Old error'};
+  app.testAnnouncement({key: 'announcement', value: {}, description: '', updated_at: ''});
+  assert.equal(app.audioTestBusy, true);
+  assert.equal(app.audioDiagnostic.test_id, 'new-test');
+  t.mock.timers.tick(1000);
+  assert.equal(counts.audioDiagnostic, 1);
+  assert.equal(app.audioTestBusy, false);
+  assert.equal(app.audioDiagnostic.detail, responses.audioDiagnostic.detail);
+  t.mock.timers.tick(5000);
+  assert.equal(counts.audioDiagnostic, 1);
+});

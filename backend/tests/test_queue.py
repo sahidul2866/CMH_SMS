@@ -2257,3 +2257,37 @@ def test_other_rank_uses_the_same_single_rank_field():
     created = client.post('/api/v1/tokens', json=token_payload() | {'rank': 'Other'})
     assert created.status_code == 201, created.text
     assert created.json()['rank'] == 'other'
+
+
+def test_audio_diagnostic_reports_disabled_and_zero_volume_and_requires_permission(monkeypatch):
+    from app.announcement import announcement_engine
+    values = {'enabled': True, 'language_order': ['en'], 'repeat_count': 1, 'rate': 0.88, 'volume': 1.0}
+    monkeypatch.setattr(announcement_engine, 'enabled', False)
+    result = client.post('/api/v1/settings/announcement/diagnose', json={'value': values})
+    assert result.status_code == 202
+    record = result.json()
+    assert record['phase'] == 'failed'
+    assert 'CMH_SMS_AUDIO_ENABLED' in record['detail']
+    assert client.get(f"/api/v1/settings/announcement/tests/{record['test_id']}").json()['detail'] == record['detail']
+    monkeypatch.setattr(announcement_engine, 'enabled', True)
+    monkeypatch.setattr(announcement_engine, 'announcements_enabled', True)
+    result = client.post('/api/v1/settings/announcement/diagnose', json={'value': values | {'volume': 0}})
+    assert 'volume is zero' in result.json()['detail']
+    assert client.get('/api/v1/settings/announcement/tests/missing').status_code == 404
+    client.cookies.clear()
+    assert client.post('/api/v1/settings/announcement/diagnose', json={'value': {}}).status_code == 401
+    assert client.get(f"/api/v1/settings/announcement/tests/{record['test_id']}").status_code == 401
+
+
+def test_audio_diagnostic_accepts_browser_playback_error_over_audio_channel(monkeypatch):
+    import time
+    from app.announcement import announcement_engine
+    monkeypatch.setattr(announcement_engine, 'diagnostics', {'test': {'test_id': 'test', 'phase': 'browser_pending', 'detail': '', 'output': 'browser', 'started': time.monotonic()}})
+    with client.websocket_connect('/api/v1/realtime/audio') as socket:
+        assert socket.receive_json()['type'] == 'connection.ready'
+        socket.send_json({'type': 'audio.diagnostic', 'test_id': 'test', 'phase': 'failed', 'detail': 'NotAllowedError: Audio playback blocked'})
+        socket.send_text('ping')
+        assert socket.receive_json()['type'] == 'heartbeat'
+        result = client.get('/api/v1/settings/announcement/tests/test').json()
+        assert result['phase'] == 'failed'
+        assert 'NotAllowedError: Audio playback blocked' in result['detail']

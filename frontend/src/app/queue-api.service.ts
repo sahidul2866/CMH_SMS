@@ -1,3 +1,4 @@
+export interface AudioDiagnostic { test_id: string; phase: string; detail: string; output: string; warnings?: string[]; }
 import { ServiceNumberSuggestion } from './models';
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
@@ -129,7 +130,8 @@ export class QueueApiService {
   saveRegistrationFields(required: string[], enabled: string[], custom: CustomRegistrationField[]) { return this.http.put<RegistrationFields>(`${this.baseUrl}/registration-fields`, {value: {required, enabled, custom}}); }
   settings() { return this.http.get<AppSetting[]>(`${this.baseUrl}/settings`); }
   saveSetting(key: string, value: Record<string, any>) { return this.http.put<AppSetting>(`${this.baseUrl}/settings/${key}`, { value }); }
-  testAnnouncement(value: Record<string, any>) { return this.http.post<{ status: string; voice_mode: string }>(`${this.baseUrl}/settings/announcement/test`, { value }); }
+  testAnnouncement(value: Record<string, any>) { return this.http.post<AudioDiagnostic>(`${this.baseUrl}/settings/announcement/diagnose`, { value }); }
+  audioDiagnostic(testId: string) { return this.http.get<AudioDiagnostic>(`${this.baseUrl}/settings/announcement/tests/${testId}`); }
 
   display(waitingRoom: string) {
     return this.http.get<DisplayState>(`${this.baseUrl}/displays/${waitingRoom}`);

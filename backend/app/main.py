@@ -1448,6 +1448,13 @@ async def browser_audio(websocket: WebSocket):
                 break
             if message == "ping":
                 await websocket.send_json({"type": "heartbeat"})
+            else:
+                try:
+                    report = json.loads(message)
+                    if isinstance(report, dict) and report.get("type") == "audio.diagnostic":
+                        announcement_engine.browser_report(str(report.get("test_id", "")), str(report.get("phase", "")), str(report.get("detail", "")))
+                except (ValueError, TypeError):
+                    pass
     except WebSocketDisconnect:
         pass
     finally:
@@ -1730,6 +1737,51 @@ async def test_announcement_voice(
     )()
     queued = announcement_engine.enqueue(sample, values)
     return {"status": "queued" if queued else "disabled", "voice_mode": values.get("voice_mode", "auto")}
+
+
+@app.post("/api/v1/settings/announcement/diagnose", status_code=202)
+async def diagnose_announcement_voice(
+    payload: SettingUpdate, _: User = Depends(require_permission("settings.manage"))
+):
+    values = validated_setting("announcement", payload.value)
+    sample = type(
+        "AudioPreview",
+        (),
+        {
+            "token_number": "CMH-123",
+            "patient_name": "Rahim Uddin",
+            "doctor_name": "Dr. Ayesha Khan",
+            "room_number": "205",
+        },
+    )()
+    test_id = secrets.token_hex(16)
+    while len(announcement_engine.diagnostics) >= 50:
+        announcement_engine.diagnostics.pop(next(iter(announcement_engine.diagnostics)))
+    announcement_engine.diagnostics[test_id] = {"test_id": test_id, "phase": "queued", "detail": "Test queued behind existing announcements.", "started": time.monotonic(), "output": announcement_engine.output}
+    reason = None
+    if not announcement_engine.enabled:
+        reason = "Announcement generation is disabled by CMH_SMS_AUDIO_ENABLED on the server."
+    elif not announcement_engine.announcements_enabled:
+        reason = "Saved announcement settings are Off. Save an enabled mode before testing."
+    elif values.get("enabled", True) is False:
+        reason = "The selected announcement mode is Off. Select Bangla, English, or Both."
+    elif float(values.get("volume", 1.0)) == 0:
+        reason = "Announcement volume is zero. Increase the volume before testing."
+    elif not announcement_engine._worker or announcement_engine._worker.done():
+        reason = "The server audio worker is not running. Restart the backend and check startup logs."
+    if reason:
+        announcement_engine.diagnostic_update(test_id, "failed", reason)
+    else:
+        announcement_engine.enqueue(sample, values, diagnostic_id=test_id)
+    return announcement_engine.diagnostic_status(test_id)
+
+
+@app.get("/api/v1/settings/announcement/tests/{test_id}")
+def announcement_test_status(test_id: str, _: User = Depends(require_permission("settings.manage"))):
+    result = announcement_engine.diagnostic_status(test_id)
+    if result is None:
+        raise HTTPException(404, "Audio test expired or server restarted. Run the test again.")
+    return result
 
 
 @app.get("/api/v1/audit", response_model=list[AuditRead])

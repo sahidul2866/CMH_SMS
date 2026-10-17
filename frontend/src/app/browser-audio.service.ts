@@ -8,9 +8,10 @@ export class BrowserAudioService {
   private socket?: WebSocket;
   private retry?: number;
   private heartbeat?: number;
-  private queue: {clip: string; volume: number}[] = [];
+  private queue: {clip: string; volume: number; testId?: string; last: boolean}[] = [];
   private playing = false;
   private generation = 0;
+  private currentTestId?: string;
   private source?: AudioBufferSourceNode;
 
   async enable(): Promise<void> {
@@ -25,19 +26,32 @@ export class BrowserAudioService {
       tone.start(); tone.stop(this.context.currentTime + 0.15);
       this.enabled = true;
       this.connect();
-    } catch { this.status = 'Sound blocked. Click Enable browser sound again.'; }
+    } catch (error) {
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      this.status = `Cannot enable browser sound: ${detail}`;
+    }
   }
 
   disable(): void {
     this.enabled = false;
     window.clearTimeout(this.retry);
     window.clearInterval(this.heartbeat);
-    this.socket?.close();
     this.clear();
+    this.socket?.close();
     this.status = '';
   }
 
+  private report(testId: string | undefined, phase: string, detail = ''): void {
+    if (testId && this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({type: 'audio.diagnostic', test_id: testId, phase, detail}));
+    }
+  }
+
   private clear(): void {
+    for (const testId of new Set([this.currentTestId, ...this.queue.map(item => item.testId)])) {
+      this.report(testId, 'failed', 'Browser sound was muted, disconnected, or announcements were turned off before playback completed.');
+    }
+    this.currentTestId = undefined;
     this.generation++;
     this.queue = [];
     this.source?.stop();
@@ -65,8 +79,9 @@ export class BrowserAudioService {
         if (data.type === 'audio.stop') this.clear();
         if (data.type === 'audio.ready' && Array.isArray(data.clips)) {
           const volume = Math.max(0, Math.min(1, data.volume ?? 1));
-          for (let i = 0; i < Math.min(3, data.repeat_count || 1); i++) {
-            this.queue.push(...data.clips.map((clip: string) => ({clip, volume})));
+          const repeats = Math.min(3, data.repeat_count || 1);
+          for (let i = 0; i < repeats; i++) {
+            this.queue.push(...data.clips.map((clip: string, index: number) => ({clip, volume, testId: data.diagnostic_id, last: i === repeats - 1 && index === data.clips.length - 1})));
           }
           void this.play();
         }
@@ -95,6 +110,7 @@ export class BrowserAudioService {
       while (this.enabled && this.queue.length) {
         const generation = this.generation;
         const item = this.queue.shift()!;
+        this.currentTestId = item.testId;
         const bytes = Uint8Array.from(atob(item.clip), c => c.charCodeAt(0));
         const buffer = await this.context.decodeAudioData(bytes.buffer);
         if (generation !== this.generation || !this.enabled) continue;
@@ -107,12 +123,17 @@ export class BrowserAudioService {
         const gain = this.context.createGain();
         gain.gain.value = item.volume;
         source.connect(gain).connect(this.context.destination);
+        this.report(item.testId, "playing");
         await new Promise<void>(resolve => { source.onended = () => resolve(); source.start(); });
+        if (item.last && generation === this.generation) this.report(item.testId, "completed");
+        this.currentTestId = undefined;
         this.source = undefined;
       }
-    } catch {
+    } catch (error) {
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      this.report(this.currentTestId, "failed", detail);
       this.disable();
-      this.status = 'Playback failed. Check speaker output, then enable browser sound again.';
+      this.status = `Playback failed: ${detail}. Enable browser sound to retry.`;
     } finally { this.playing = false; }
   }
 }

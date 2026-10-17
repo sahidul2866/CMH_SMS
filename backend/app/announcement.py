@@ -10,12 +10,16 @@ from uuid import uuid4
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 from pathlib import Path
 from string import Template
 from typing import Any
 
 from .bangla_names import suggest_bengali_name
 from .observability import log_event, request_id_context
+
+
+diagnostic_context: ContextVar[str | None] = ContextVar("audio_diagnostic", default=None)
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,7 @@ class Announcement:
     voice_mode: str = "auto"
     cache_max_files: int = 40
     patient_name_bn: str | None = None
+    diagnostic_id: str | None = None
     announcement_id: str = field(default_factory=lambda: uuid4().hex)
     originating_request_id: str | None = None
 
@@ -56,6 +61,33 @@ class AnnouncementEngine:
         self.last_announcement: str | None = None
         self.announcements_enabled = True
         self._policy_generation = 0
+        self.diagnostics: dict[str, dict] = {}
+
+    def diagnostic_update(self, test_id: str | None, phase: str, detail: str, **extra) -> None:
+        if test_id and test_id in self.diagnostics:
+            self.diagnostics[test_id].update(phase=phase, detail=detail, **extra)
+
+    def diagnostic_warning(self, source: str, error: Exception) -> None:
+        record = self.diagnostics.get(diagnostic_context.get())
+        if record is not None:
+            record.setdefault("warnings", []).append(f"{source} voice failed; using the basic offline fallback. {type(error).__name__}: {str(error)[:500]}")
+
+    def browser_report(self, test_id: str, phase: str, detail: str = "") -> None:
+        record = self.diagnostics.get(test_id)
+        if not record or record["phase"] not in {"browser_pending", "browser_playing"}:
+            return
+        if phase == "completed":
+            self.diagnostic_update(test_id, "completed", "Browser finished playing the test. If silent, check the device's output, volume mixer, speaker cable and amplifier.")
+        elif phase == "failed":
+            self.diagnostic_update(test_id, "failed", f"Browser playback failed: {detail[:1000]}")
+        elif phase == "playing":
+            self.diagnostic_update(test_id, "browser_playing", "Browser decoded the voice and started playback.")
+
+    def diagnostic_status(self, test_id: str) -> dict | None:
+        record = self.diagnostics.get(test_id)
+        if record and record["phase"] not in {"completed", "failed", "cancelled"} and time.monotonic() - record["started"] > 120:
+            self.diagnostic_update(test_id, "failed", f"Timed out during {record['phase']}: {record['detail']} No completion was confirmed; check the browser connection or server logs.")
+        return {k: v for k, v in record.items() if k != "started"} if record else None
 
     async def start(self) -> None:
         if self.enabled and self._worker is None:
@@ -78,12 +110,13 @@ class AnnouncementEngine:
             self._policy_generation += 1
             while True:
                 try:
-                    self._queue.get_nowait()
+                    discarded = self._queue.get_nowait()
+                    self.diagnostic_update(discarded.diagnostic_id, "cancelled", "Announcements were turned off while the test was queued.")
                     self._queue.task_done()
                 except asyncio.QueueEmpty:
                     break
 
-    def enqueue(self, token: Any, settings: dict | None = None) -> bool:
+    def enqueue(self, token: Any, settings: dict | None = None, *, diagnostic_id: str | None = None) -> bool:
         values = settings or {}
         if not self.enabled or not self.announcements_enabled or values.get("enabled", True) is False:
             log_event("audio.suppressed", enabled=self.enabled, announcements_enabled=self.announcements_enabled)
@@ -97,6 +130,7 @@ class AnnouncementEngine:
             else:
                 language = "en"
         item = Announcement(
+            diagnostic_id=diagnostic_id,
             token_number=token.token_number,
             originating_request_id=request_id_context.get(),
             patient_name=token.patient_name,
@@ -145,18 +179,23 @@ class AnnouncementEngine:
             generation = self._policy_generation
             started = time.perf_counter()
             audio_context = request_id_context.set(item.originating_request_id)
+            test_context = diagnostic_context.set(item.diagnostic_id)
             log_event("audio.started", announcement_id=item.announcement_id, language=item.language, voice_mode=item.voice_mode)
             try:
                 if not self.announcements_enabled:
+                    self.diagnostic_update(item.diagnostic_id, "cancelled", "Announcements are turned off.")
                     continue
+                self.diagnostic_update(item.diagnostic_id, "generating", "Generating the selected announcement voice.")
                 paths = await asyncio.to_thread(self._prepare, item)
                 if self.output == "browser":
                     if not self.announcements_enabled or generation != self._policy_generation:
+                        self.diagnostic_update(item.diagnostic_id, "cancelled", "Announcements changed while generating the test.")
                         continue
                     from .realtime import browser_audio_hub
                     clips = [base64.b64encode(path.read_bytes()).decode("ascii") for path in paths]
+                    self.diagnostic_update(item.diagnostic_id, "browser_pending", "Waiting for a browser to confirm playback.", output="browser")
                     listeners = await browser_audio_hub.deliver(
-                        clips=clips, repeat_count=item.repeat_count, volume=item.volume)
+                        clips=clips, repeat_count=item.repeat_count, volume=item.volume, diagnostic_id=item.diagnostic_id)
                     if listeners:
                         self.delivered_count += 1
                         self.last_announcement = item.token_number
@@ -164,6 +203,7 @@ class AnnouncementEngine:
                         log_event("audio.delivered", announcement_id=item.announcement_id, listeners=listeners)
                         continue
                     log_event("audio.fallback", source="browser", target="server", reason="no_browser_delivery")
+                self.diagnostic_update(item.diagnostic_id, "server_playing", "Playing through the server speaker" + (" because no enabled browser received the test." if self.output == "browser" else "."), output="server")
                 for _ in range(item.repeat_count):
                     for path in paths:
                         if not self.announcements_enabled or generation != self._policy_generation:
@@ -172,17 +212,26 @@ class AnnouncementEngine:
                 if self.announcements_enabled and generation == self._policy_generation:
                     self.last_announcement = item.token_number
                     self.completed_count += 1
+                    self.diagnostic_update(item.diagnostic_id, "completed", "Server audio player finished without an error. If silent, check the server output device, volume mixer, speaker cable and amplifier.")
                     log_event("audio.completed", announcement_id=item.announcement_id, duration_ms=round((time.perf_counter() - started) * 1000))
                 else:
+                    self.diagnostic_update(item.diagnostic_id, "cancelled", "Announcements were turned off during playback.")
                     log_event("audio.cancelled", announcement_id=item.announcement_id)
                 self.last_error = None
             except Exception as exc:
                 log_event("audio.failed", level=logging.ERROR, error=exc, announcement_id=item.announcement_id)
                 self.last_error = str(exc)
+                detail = str(exc)
+                if isinstance(exc, subprocess.CalledProcessError):
+                    detail += ": " + str(exc.stderr or exc.stdout or "No player error output")
+                record = self.diagnostics.get(item.diagnostic_id)
+                phase = record["phase"] if record else "audio"
+                self.diagnostic_update(item.diagnostic_id, "failed", f"{phase}: {type(exc).__name__}: {detail[:2000]}")
             finally:
                 self.current_announcement = None
                 self._queue.task_done()
                 request_id_context.reset(audio_context)
+                diagnostic_context.reset(test_context)
 
     def _prepare(self, item: Announcement) -> list[Path]:
         language = item.language.lower()
@@ -194,6 +243,7 @@ class AnnouncementEngine:
                 try:
                     return self._synthesise_offline_bengali(text, item.rate)
                 except Exception as error:
+                    self.diagnostic_warning("Offline neural", error)
                     log_event("audio.fallback", level=logging.WARNING, error=error, source="offline_neural", target="basic_offline")
             if allow_neural:
                 return self._synthesise(text, voice, item.rate)
@@ -241,6 +291,7 @@ class AnnouncementEngine:
             try:
                 return self._synthesise_neural(text, voice, rate)
             except Exception as error:
+                self.diagnostic_warning("Online neural", error)
                 log_event("audio.fallback", level=logging.WARNING, error=error, source="online_neural", target="basic_offline")
                 # Announcements must still work during an internet outage.
                 # The existing offline system voice remains the safe fallback.

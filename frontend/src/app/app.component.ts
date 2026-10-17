@@ -4,10 +4,10 @@ import { ClientLogService } from './client-log.service';
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Observable, Subscription, finalize, forkJoin, interval, of, timeout } from 'rxjs';
+import { Observable, Subscription, finalize, forkJoin, interval, of, timeout, switchMap, takeWhile, take } from 'rxjs';
 
 import { ReportCategoryOption, ClassificationUpdate, RegistrationFields, CustomRegistrationField, MonthlySummary, PatientClassification, AppSetting, Appointment, AuditEvent, AuthUser, DashboardRoom, DeviceEndpoint, DisplayState, Doctor, Holiday, LookupOption, Patient, PermissionDefinition, QueueReport, QueueToken, RadiographyDashboard, RealtimeStatus, ReceptionReportRow, RoleDefinition, ScheduleSlot, SmsMessage, View, WaitingRoom } from './models';
-import { QueueApiService } from './queue-api.service';
+import { AudioDiagnostic, QueueApiService } from './queue-api.service';
 import { ModalComponent } from './modal.component';
 import { SearchableSelectComponent } from './searchable-select.component';
 import { RealtimeService } from './realtime.service';
@@ -226,6 +226,8 @@ export class AppComponent implements OnDestroy {
   passwordForm = { current: '', next: '', confirm: '' };
   passwordBusy = false;
   audioTestBusy = false;
+  audioDiagnostic: AudioDiagnostic | null = null;
+  private audioDiagnosticSubscription?: Subscription;
   busy = false;
   showReceptionModal = false;
   message = '';
@@ -646,6 +648,7 @@ export class AppComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.audioDiagnosticSubscription?.unsubscribe();
     this.browserAudio.disable();
     this.clearServiceSearch();
     this.refreshScheduler.cancel();
@@ -1395,17 +1398,34 @@ export class AppComponent implements OnDestroy {
   }
 
   testAnnouncement(setting: AppSetting): void {
+    this.audioDiagnosticSubscription?.unsubscribe();
     this.audioTestBusy = true;
+    this.audioDiagnostic = null;
+    const terminal = (phase: string) => ['completed', 'failed', 'cancelled'].includes(phase);
+    const failedRequest = (error: any) => {
+      this.audioTestBusy = false;
+      this.audioDiagnostic = {test_id: '', phase: 'failed', output: '', detail: error?.error?.detail || `Audio diagnostic request failed (HTTP ${error?.status || 'unreachable'}). Check the connection and sign-in permissions.`};
+    };
     this.api.testAnnouncement(setting.value).subscribe({
       next: result => {
-        this.audioTestBusy = false;
-        const label = setting.value['voice_mode'] === 'offline_neural' ? 'Offline neural' : setting.value['voice_mode'] === 'offline' ? 'Basic offline' : 'Automatic';
-        this.message = result.status === 'disabled' ? 'Announcements are off. Save an enabled announcement mode and check that server audio is enabled before testing.' : `${label} voice test queued for browser playback, with server speaker fallback.`;
+        this.audioDiagnostic = result;
+        if (terminal(result.phase)) { this.audioTestBusy = false; return; }
+        this.audioDiagnosticSubscription = interval(1000).pipe(
+          switchMap(() => this.api.audioDiagnostic(result.test_id)),
+          takeWhile(status => !terminal(status.phase), true),
+          take(125),
+        ).subscribe({
+          next: status => this.audioDiagnostic = status,
+          error: failedRequest,
+          complete: () => {
+            this.audioTestBusy = false;
+            if (this.audioDiagnostic && !terminal(this.audioDiagnostic.phase)) {
+              this.audioDiagnostic = {...this.audioDiagnostic, phase: 'failed', detail: `No playback confirmation before timeout. Last stage: ${this.audioDiagnostic.phase}. ${this.audioDiagnostic.detail}`};
+            }
+          },
+        });
       },
-      error: (error) => {
-        this.audioTestBusy = false;
-        this.message = error?.error?.detail || 'Unable to test the audio voice.';
-      },
+      error: failedRequest,
     });
   }
 

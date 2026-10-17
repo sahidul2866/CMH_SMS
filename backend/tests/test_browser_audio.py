@@ -104,3 +104,91 @@ def test_audio_hub_counts_deliveries_and_removes_failed_browsers():
         assert hub.connection_count('audio') == 0
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('failure_stage', ['generating', 'server_playing', None])
+def test_diagnostic_reports_its_own_generation_or_player_failure(monkeypatch, tmp_path, failure_stage):
+    import time
+    import subprocess
+    engine = AnnouncementEngine()
+    engine.enabled = True
+    engine.output = 'server'
+    engine.cache_dir = tmp_path
+    engine.diagnostics['test'] = {'test_id': 'test', 'phase': 'queued', 'detail': '', 'started': time.monotonic()}
+    clip = tmp_path / 'test.wav'
+    clip.write_bytes(b'voice')
+
+    def prepare(item):
+        if failure_stage == 'generating':
+            raise RuntimeError('Neural model file is missing')
+        return [clip]
+
+    def play(path):
+        if failure_stage == 'server_playing':
+            raise subprocess.CalledProcessError(1, ['player'], stderr='No default output device')
+
+    monkeypatch.setattr(engine, '_prepare', prepare)
+    monkeypatch.setattr(engine, '_play', play)
+
+    async def scenario():
+        await engine.start()
+        try:
+            engine.enqueue(SimpleNamespace(token_number='001', patient_name='Patient', room_number='205'),
+                           diagnostic_id='test')
+            await asyncio.wait_for(engine._queue.join(), timeout=2)
+        finally:
+            await engine.stop()
+
+    asyncio.run(scenario())
+    result = engine.diagnostic_status('test')
+    assert result['phase'] == ('failed' if failure_stage else 'completed')
+    if failure_stage:
+        assert failure_stage in result['detail']
+        assert ('Neural model file is missing' if failure_stage == 'generating' else 'No default output device') in result['detail']
+
+
+def test_browser_diagnostic_requires_playback_confirmation_and_times_out(monkeypatch):
+    import time
+    engine = AnnouncementEngine()
+    engine.diagnostics['test'] = {'phase': 'browser_pending', 'detail': 'Waiting for playback.', 'started': time.monotonic()}
+    engine.browser_report('unknown', 'completed')
+    assert engine.diagnostic_status('test')['phase'] == 'browser_pending'
+    engine.browser_report('test', 'failed', 'EncodingError: Unsupported audio format')
+    result = engine.diagnostic_status('test')
+    assert result['phase'] == 'failed'
+    assert 'EncodingError: Unsupported audio format' in result['detail']
+    engine.browser_report('test', 'completed')
+    assert engine.diagnostic_status('test')['phase'] == 'failed'
+    engine.diagnostics['test'].update(phase='browser_pending', started=time.monotonic() - 121)
+    assert 'Timed out during browser_pending' in engine.diagnostic_status('test')['detail']
+
+
+def test_browser_diagnostic_confirms_completion_and_queued_test_cancels():
+    import time
+    engine = AnnouncementEngine()
+    engine.enabled = True
+    engine.diagnostics['test'] = {'phase': 'browser_pending', 'detail': '', 'started': time.monotonic()}
+    engine.browser_report('test', 'playing')
+    assert engine.diagnostic_status('test')['phase'] == 'browser_playing'
+    engine.browser_report('test', 'completed')
+    assert engine.diagnostic_status('test')['phase'] == 'completed'
+    engine.diagnostics['test']['phase'] = 'queued'
+    engine.enqueue(SimpleNamespace(token_number='001', patient_name='Patient', room_number='205'), diagnostic_id='test')
+    engine.set_announcements_enabled(False)
+    assert engine.diagnostic_status('test')['phase'] == 'cancelled'
+
+
+def test_neural_fallback_warning_is_attached_to_the_current_test(monkeypatch, tmp_path):
+    import time
+    from app.announcement import Announcement, diagnostic_context
+    engine = AnnouncementEngine()
+    engine.diagnostics['test'] = {'phase': 'generating', 'detail': '', 'started': time.monotonic()}
+    monkeypatch.setattr(engine, '_synthesise_offline_bengali', lambda *args: (_ for _ in ()).throw(RuntimeError('Model missing')))
+    monkeypatch.setattr(engine, '_synthesise', lambda *args, **kwargs: tmp_path / 'basic.wav')
+    context = diagnostic_context.set('test')
+    try:
+        engine._prepare(Announcement('001', 'Patient', None, 'Doctor', '205', language='bn', voice_mode='offline_neural'))
+    finally:
+        diagnostic_context.reset(context)
+    assert 'Model missing' in engine.diagnostic_status('test')['warnings'][0]
+    assert 'basic offline fallback' in engine.diagnostic_status('test')['warnings'][0]
