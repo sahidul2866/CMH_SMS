@@ -15,10 +15,10 @@ const temporary = await mkdtemp(path.join(root, 'node_modules/.live-refresh-test
 after(() => rm(temporary, { recursive: true, force: true }));
 const output = path.join(temporary, 'component.mjs');
 await build({
-  stdin: { contents: `export {BrowserAudioService} from './src/app/browser-audio.service'; export {SearchableSelectComponent} from './src/app/searchable-select.component'; export {ClientLogService} from './src/app/client-log.service'; export {AppComponent} from './src/app/app.component'; export {QueueApiService} from './src/app/queue-api.service'; export {RealtimeService} from './src/app/realtime.service';`, resolveDir: root },
+  stdin: { contents: `export {SearchableSelectComponent} from './src/app/searchable-select.component'; export {ClientLogService} from './src/app/client-log.service'; export {AppComponent} from './src/app/app.component'; export {QueueApiService} from './src/app/queue-api.service'; export {RealtimeService} from './src/app/realtime.service';`, resolveDir: root },
   tsconfig: path.join(root, 'tsconfig.json'), bundle: true, packages: 'external', platform: 'node', format: 'esm', outfile: output,
 });
-const { BrowserAudioService, SearchableSelectComponent, ClientLogService, AppComponent, QueueApiService, RealtimeService } = await import(pathToFileURL(output));
+const { SearchableSelectComponent, ClientLogService, AppComponent, QueueApiService, RealtimeService } = await import(pathToFileURL(output));
 
 function fixture(t) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: Date.now() });
@@ -46,7 +46,7 @@ function fixture(t) {
   const events = new Subject();
   const status = new BehaviorSubject('connected');
   const realtime = {status$: status, connect: () => events};
-  const injector = Injector.create({providers: [{provide: BrowserAudioService, useValue: {enabled: false, disable() {}}}, {provide: ClientLogService, useValue: {navigation() {}, record() {}}}, {provide: QueueApiService, useValue: api}, {provide: RealtimeService, useValue: realtime}]});
+  const injector = Injector.create({providers: [{provide: ClientLogService, useValue: {navigation() {}, record() {}}}, {provide: QueueApiService, useValue: api}, {provide: RealtimeService, useValue: realtime}]});
   const app = runInInjectionContext(injector, () => new AppComponent());
   t.after(() => { app.ngOnDestroy(); injector.destroy(); });
   events.next({type: 'connection.ready'});
@@ -320,8 +320,8 @@ test('rank accepts custom text, retains it on blur, and reuses matching suggesti
 
 test('audio diagnostic button waits for this test result and displays the reported failure', t => {
   const {app, responses, counts} = fixture(t);
-  responses.testAnnouncement = {test_id: 'new-test', phase: 'queued', output: 'browser', detail: 'Queued'};
-  responses.audioDiagnostic = {test_id: 'new-test', phase: 'failed', output: 'browser', detail: 'Browser playback failed: EncodingError: unsupported format'};
+  responses.testAnnouncement = {test_id: 'new-test', phase: 'queued', output: 'server', detail: 'Queued'};
+  responses.audioDiagnostic = {test_id: 'new-test', phase: 'failed', output: 'server', detail: 'Server playback failed: No default output device'};
   app.audioDiagnostic = {test_id: 'old-test', phase: 'failed', output: 'server', detail: 'Old error'};
   app.testAnnouncement({key: 'announcement', value: {}, description: '', updated_at: ''});
   assert.equal(app.audioTestBusy, true);

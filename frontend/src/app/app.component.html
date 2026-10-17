@@ -25,10 +25,6 @@
 </section>
 
 <div class="app-shell" [class.dashboard-overview]="view === 'dashboard' && !dashboardDetail" [class.display-shell]="view === 'display'" *ngIf="currentUser && !currentUser.must_change_password">
-  <div class="browser-sound" *ngIf="hasPermission('display.view')">
-    <button type="button" (click)="browserAudio.enabled ? browserAudio.disable() : browserAudio.enable()">{{ browserAudio.enabled ? 'Mute browser sound' : 'Enable browser sound' }}</button>
-    <span role="status">{{ browserAudio.status }}</span>
-  </div>
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <aside class="sidebar" *ngIf="view !== 'display'">
     <div class="brand">
@@ -441,7 +437,7 @@
                 <strong>{{ diagnostic.phase === 'completed' ? 'Playback completed' : diagnostic.phase === 'failed' ? 'Audio test failed' : diagnostic.phase === 'cancelled' ? 'Test cancelled' : 'Testing: ' + diagnostic.phase }}</strong>
                 <p>{{ diagnostic.detail }}</p>
                 <p *ngFor="let warning of diagnostic.warnings">{{ warning }}</p>
-                <small *ngIf="diagnostic.output">Output: {{ diagnostic.output }}. This browser: {{ browserAudio.enabled ? browserAudio.status : 'sound muted; another enabled browser or the server will play' }}.</small>
+                <small *ngIf="diagnostic.output">Output: server speaker.</small>
                 <p *ngIf="diagnostic.phase === 'completed'">Did you hear the test? Software cannot verify physical speaker sound. If you heard nothing, check the selected output, mute/volume, speaker connection and amplifier.</p>
               </div>
             </div>

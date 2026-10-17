@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import os
 import logging
@@ -42,12 +41,12 @@ class Announcement:
 
 
 class AnnouncementEngine:
-    """Generate ordered speech for browser or server speaker playback."""
+    """Generate ordered speech for the server speaker."""
 
     def __init__(self) -> None:
         self.enabled = os.getenv("CMH_SMS_AUDIO_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
         self.cache_dir = Path(os.getenv("CMH_SMS_AUDIO_CACHE", "data/announcement-cache"))
-        self.output = os.getenv("CMH_SMS_AUDIO_OUTPUT", "browser").lower()
+        self.output = "server"
         self.playback_command = os.getenv("CMH_SMS_AUDIO_PLAY_COMMAND", "")
         self.prompt_dir = Path(__file__).with_name("audio")
         # One unbounded FIFO is shared by every doctor. The single worker below
@@ -56,7 +55,6 @@ class AnnouncementEngine:
         self._worker: asyncio.Task[None] | None = None
         self.current_announcement: str | None = None
         self.completed_count = 0
-        self.delivered_count = 0
         self.last_error: str | None = None
         self.last_announcement: str | None = None
         self.announcements_enabled = True
@@ -72,21 +70,10 @@ class AnnouncementEngine:
         if record is not None:
             record.setdefault("warnings", []).append(f"{source} voice failed; using the basic offline fallback. {type(error).__name__}: {str(error)[:500]}")
 
-    def browser_report(self, test_id: str, phase: str, detail: str = "") -> None:
-        record = self.diagnostics.get(test_id)
-        if not record or record["phase"] not in {"browser_pending", "browser_playing"}:
-            return
-        if phase == "completed":
-            self.diagnostic_update(test_id, "completed", "Browser finished playing the test. If silent, check the device's output, volume mixer, speaker cable and amplifier.")
-        elif phase == "failed":
-            self.diagnostic_update(test_id, "failed", f"Browser playback failed: {detail[:1000]}")
-        elif phase == "playing":
-            self.diagnostic_update(test_id, "browser_playing", "Browser decoded the voice and started playback.")
-
     def diagnostic_status(self, test_id: str) -> dict | None:
         record = self.diagnostics.get(test_id)
         if record and record["phase"] not in {"completed", "failed", "cancelled"} and time.monotonic() - record["started"] > 120:
-            self.diagnostic_update(test_id, "failed", f"Timed out during {record['phase']}: {record['detail']} No completion was confirmed; check the browser connection or server logs.")
+            self.diagnostic_update(test_id, "failed", f"Timed out during {record['phase']}: {record['detail']} No completion was confirmed; check the server logs and audio output device.")
         return {k: v for k, v in record.items() if k != "started"} if record else None
 
     async def start(self) -> None:
@@ -152,14 +139,11 @@ class AnnouncementEngine:
     def status(self) -> dict:
         synthesizer = self._synthesizer()
         player = self._player()
-        from .realtime import browser_audio_hub
         return {
             "enabled": self.enabled,
             "output": self.output,
-            "browser_listeners": browser_audio_hub.connection_count("audio"),
-            "server_fallback": self.output == "browser",
             "announcements_enabled": self.announcements_enabled,
-            "ready": (synthesizer is not None or self._offline_neural_ready()) and (self.output == "browser" or player is not None) if self.enabled else False,
+            "ready": (synthesizer is not None or self._offline_neural_ready()) and (bool(self.playback_command) or player is not None) if self.enabled else False,
             "synthesizer": Path(synthesizer).name if synthesizer else None,
             "player": Path(player).name if player else None,
             "bangla_supported": self._offline_neural_ready() or self._bangla_prompts_available() or self._bangla_supported(synthesizer),
@@ -167,7 +151,6 @@ class AnnouncementEngine:
             "queued": self._queue.qsize(),
             "current_announcement": self.current_announcement,
             "completed_count": self.completed_count,
-            "delivered_count": self.delivered_count,
             "last_announcement": self.last_announcement,
             "last_error": self.last_error,
         }
@@ -187,23 +170,7 @@ class AnnouncementEngine:
                     continue
                 self.diagnostic_update(item.diagnostic_id, "generating", "Generating the selected announcement voice.")
                 paths = await asyncio.to_thread(self._prepare, item)
-                if self.output == "browser":
-                    if not self.announcements_enabled or generation != self._policy_generation:
-                        self.diagnostic_update(item.diagnostic_id, "cancelled", "Announcements changed while generating the test.")
-                        continue
-                    from .realtime import browser_audio_hub
-                    clips = [base64.b64encode(path.read_bytes()).decode("ascii") for path in paths]
-                    self.diagnostic_update(item.diagnostic_id, "browser_pending", "Waiting for a browser to confirm playback.", output="browser")
-                    listeners = await browser_audio_hub.deliver(
-                        clips=clips, repeat_count=item.repeat_count, volume=item.volume, diagnostic_id=item.diagnostic_id)
-                    if listeners:
-                        self.delivered_count += 1
-                        self.last_announcement = item.token_number
-                        self.last_error = None
-                        log_event("audio.delivered", announcement_id=item.announcement_id, listeners=listeners)
-                        continue
-                    log_event("audio.fallback", source="browser", target="server", reason="no_browser_delivery")
-                self.diagnostic_update(item.diagnostic_id, "server_playing", "Playing through the server speaker" + (" because no enabled browser received the test." if self.output == "browser" else "."), output="server")
+                self.diagnostic_update(item.diagnostic_id, "server_playing", "Playing through the server speaker.", output="server")
                 for _ in range(item.repeat_count):
                     for path in paths:
                         if not self.announcements_enabled or generation != self._policy_generation:
@@ -312,15 +279,12 @@ class AnnouncementEngine:
         digest = hashlib.sha256(
             f"v4|{Path(synthesizer).name}|{macos_voice or engine_voice}|{rate}|{text}".encode()
         ).hexdigest()[:24]
-        browser_wav = is_macos_say and self.output == "browser"
-        output = self.cache_dir / f"{digest}.{'aiff' if is_macos_say and not browser_wav else 'wav'}"
+        output = self.cache_dir / f"{digest}.{'aiff' if is_macos_say else 'wav'}"
         if not output.exists():
             if is_macos_say:
                 command = [synthesizer]
                 if macos_voice:
                     command.extend(["-v", macos_voice])
-                if browser_wav:
-                    command.extend(["--data-format=LEI16@24000"])
                 command.extend(["-r", str(rate), "-o", str(output), text])
             else:
                 command = [synthesizer, "-v", engine_voice, "-s", str(rate), "-w", str(output), text]

@@ -133,24 +133,3 @@ class ChangeHub(WaitingRoomHub):
 
 
 change_hub = ChangeHub()
-
-
-class BrowserAudioHub(WaitingRoomHub):
-    async def deliver(self, **payload) -> int:
-        """Count successful deliveries so no-listener/send failures fall back locally."""
-        event = self.event("audio", "audio.ready", "announcement", **payload)
-        async with self._lock:
-            clients = list(self._connections.get("audio", set()))
-
-        async def send(client: WebSocket) -> bool:
-            try:
-                await asyncio.wait_for(client.send_json(event), timeout=2)
-                return True
-            except Exception:
-                await self.disconnect("audio", client)
-                return False
-
-        return sum(await asyncio.gather(*(send(client) for client in clients)))
-
-
-browser_audio_hub = BrowserAudioHub()

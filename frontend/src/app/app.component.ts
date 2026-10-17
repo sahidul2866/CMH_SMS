@@ -1,4 +1,3 @@
-import { BrowserAudioService } from './browser-audio.service';
 import { ServiceNumberSuggestion } from './models';
 import { ClientLogService } from './client-log.service';
 import { CommonModule } from '@angular/common';
@@ -25,7 +24,6 @@ const YEAR_START_LOCAL = `${TODAY_LOCAL.slice(0, 4)}-01-01`;
   styleUrl: './app.component.scss',
 })
 export class AppComponent implements OnDestroy {
-  readonly browserAudio = inject(BrowserAudioService);
   private readonly clientLogs = inject(ClientLogService);
   private readonly api = inject(QueueApiService);
   private readonly realtime = inject(RealtimeService);
@@ -649,7 +647,6 @@ export class AppComponent implements OnDestroy {
 
   ngOnDestroy(): void {
     this.audioDiagnosticSubscription?.unsubscribe();
-    this.browserAudio.disable();
     this.clearServiceSearch();
     this.refreshScheduler.cancel();
     this.clockSubscription?.unsubscribe();
@@ -687,7 +684,6 @@ export class AppComponent implements OnDestroy {
   }
 
   logout(): void {
-    this.browserAudio.disable();
     if (this.isDemo) { window.location.reload(); return; }
     this.api.logout().subscribe({ complete: () => window.location.reload() });
   }
@@ -1929,7 +1925,7 @@ export class AppComponent implements OnDestroy {
   }
 
   private speakDisplay(state: DisplayState): void {
-    // Audio arrives on its own channel; display refreshes must not replay calls.
+    // Server audio runs independently; display refreshes must not replay calls.
     if (state.current) this.lastSpokenTokenId = state.current.id;
   }
 }

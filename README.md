@@ -8,7 +8,7 @@ Standalone serial and appointment management product. It borrows the parent HMS'
 - Reception registers patients, schedules appointments, and checks arrivals into the live queue.
 - Doctor sees a live queue, calls next, or calls a selected patient.
 - The waiting-room screen shows the current call and next patients.
-- The backend generates patient announcements; browsers with sound enabled play them through their connected speakers.
+- The backend generates and plays patient announcements through the server speaker.
 - Authenticated WebSocket change notifications keep reception, radiographer queues, dashboards and displays current. Connected idle screens make no periodic data requests; a 30-second fallback runs only while disconnected or recovering from a failed fetch.
 - Alembic owns the standalone database schema.
 - Seed data provides four waiting rooms, four doctors, and realistic live queues.
@@ -122,26 +122,21 @@ PGPASSWORD="$CMH_SMS_POSTGRES_PASSWORD" pg_dump \
 Stopping the application with `Ctrl+C` leaves the native PostgreSQL service
 running. No Docker installation or container runtime is used.
 
-## Browser audio
+## Server audio
 
-Connect the speaker to the device whose browser opens the app. Sign in and click
-**Enable browser sound** at the bottom right. Python generates the existing
-neural Bangla/English voices and streams them to the browser. Calls and recalls
-play in order with the saved volume and repetition settings. Keep the browser
-open; click Enable browser sound again after refreshing. Enable only the browsers
-intended to make announcements. Mute browser sound stops that browser's playback.
-When no sound-enabled browser receives a new announcement, the server plays the
-identical generated clips through its speaker instead. Calls and recalls both use
-this fallback. Muting during a clip takes effect for subsequent announcements;
-the interrupted clip is not replayed on the server.
+Connect the speakers or PA to the backend server. Calls, recalls and voice tests
+play there automatically; browser windows only control the queue. The updated
+`edge-tts==7.3.1` client generates the existing Bangla/English online neural voices.
+Offline neural and basic offline modes remain available in announcement settings.
+Every announcement finishes before the next one starts.
 
-`CMH_SMS_AUDIO_OUTPUT=browser` is the default. Set it to `server` and restart to
-restore physical Python/server playback. `CMH_SMS_AUDIO_ENABLED=false` disables
-both modes. Health at `/api/v1/health` reports the output and generation errors;
-`delivered_count` counts browser deliveries, not verified speaker playback.
+`CMH_SMS_AUDIO_ENABLED=false` disables announcements. Playback always uses the
+server speaker, including installations with an old `CMH_SMS_AUDIO_OUTPUT=browser`
+configuration. Windows uses winsound, macOS uses afplay, and Linux requires an
+installed audio player. `CMH_SMS_AUDIO_PLAY_COMMAND` overrides the server player.
 
 Use **Settings → Console settings → Announcement → Test audio & diagnose** to
-run a tracked test. The result shows voice generation, browser confirmation or
+run a tracked test. The result shows voice generation and
 server playback, exact reported errors, and neural-to-basic voice fallback
 warnings. A completed test confirms software playback, not that the physical
 speaker was audible. Diagnostics are kept in memory (up to 50 tests) and expire

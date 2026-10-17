@@ -2277,17 +2277,3 @@ def test_audio_diagnostic_reports_disabled_and_zero_volume_and_requires_permissi
     client.cookies.clear()
     assert client.post('/api/v1/settings/announcement/diagnose', json={'value': {}}).status_code == 401
     assert client.get(f"/api/v1/settings/announcement/tests/{record['test_id']}").status_code == 401
-
-
-def test_audio_diagnostic_accepts_browser_playback_error_over_audio_channel(monkeypatch):
-    import time
-    from app.announcement import announcement_engine
-    monkeypatch.setattr(announcement_engine, 'diagnostics', {'test': {'test_id': 'test', 'phase': 'browser_pending', 'detail': '', 'output': 'browser', 'started': time.monotonic()}})
-    with client.websocket_connect('/api/v1/realtime/audio') as socket:
-        assert socket.receive_json()['type'] == 'connection.ready'
-        socket.send_json({'type': 'audio.diagnostic', 'test_id': 'test', 'phase': 'failed', 'detail': 'NotAllowedError: Audio playback blocked'})
-        socket.send_text('ping')
-        assert socket.receive_json()['type'] == 'heartbeat'
-        result = client.get('/api/v1/settings/announcement/tests/test').json()
-        assert result['phase'] == 'failed'
-        assert 'NotAllowedError: Audio playback blocked' in result['detail']

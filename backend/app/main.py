@@ -82,7 +82,7 @@ from .models import (
 )
 from .monthly_report import router as monthly_report_router
 from .notification import SmsService, sms_outbox_worker
-from .realtime import browser_audio_hub, change_hub, mutation_topics, waiting_room_hub
+from .realtime import change_hub, mutation_topics, waiting_room_hub
 from .schemas import (
     AppointmentCreate,
     AppointmentRead,
@@ -1429,38 +1429,6 @@ def display(waiting_room: str, user: User = Depends(require_permission("display.
     return QueueService(db).display(waiting_room)
 
 
-@app.websocket("/api/v1/realtime/audio")
-async def browser_audio(websocket: WebSocket):
-    def allowed():
-        with SessionLocal() as db:
-            user = websocket_user(websocket, db)
-            return bool(user and has_permission(user, db, "display.view"))
-
-    if not allowed():
-        await websocket.close(code=4403)
-        return
-    await browser_audio_hub.connect("audio", websocket)
-    try:
-        while True:
-            message = await websocket.receive_text()
-            if not allowed():
-                await websocket.close(code=4403)
-                break
-            if message == "ping":
-                await websocket.send_json({"type": "heartbeat"})
-            else:
-                try:
-                    report = json.loads(message)
-                    if isinstance(report, dict) and report.get("type") == "audio.diagnostic":
-                        announcement_engine.browser_report(str(report.get("test_id", "")), str(report.get("phase", "")), str(report.get("detail", "")))
-                except (ValueError, TypeError):
-                    pass
-    except WebSocketDisconnect:
-        pass
-    finally:
-        await browser_audio_hub.disconnect("audio", websocket)
-
-
 @app.websocket("/api/v1/realtime/updates")
 async def application_realtime(websocket: WebSocket):
     def access_code():
@@ -1715,8 +1683,6 @@ async def update_setting(
     db.refresh(setting)
     if key == "announcement":
         announcement_engine.set_announcements_enabled(setting.value.get("enabled", True))
-        if not setting.value.get("enabled", True):
-            await browser_audio_hub.broadcast("audio", "audio.stop", "disabled")
     return setting
 
 
