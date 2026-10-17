@@ -197,3 +197,5 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .bengali-actions .quiet-button { padding: 6px 12px; }
 .bengali-status { margin: 0; font-size: 12px; color: var(--muted); }
 
+
+.browser-sound { position: fixed; bottom: 12px; right: 12px; z-index: 1000; padding: 10px; border-radius: 8px; background: #fff; color: #123; box-shadow: 0 2px 12px #0003; display: flex; gap: 8px; align-items: center; }

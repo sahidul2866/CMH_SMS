@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import os
 import logging
@@ -26,6 +27,7 @@ class Announcement:
     room_number: str
     language: str = "en"
     repeat_count: int = 1
+    volume: float = 1.0
     rate: int = 150
     voice_mode: str = "auto"
     cache_max_files: int = 40
@@ -35,11 +37,12 @@ class Announcement:
 
 
 class AnnouncementEngine:
-    """Serialised, backend-hosted speech playback for the connected hospital PA."""
+    """Generate ordered speech for browser or server speaker playback."""
 
     def __init__(self) -> None:
         self.enabled = os.getenv("CMH_SMS_AUDIO_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
         self.cache_dir = Path(os.getenv("CMH_SMS_AUDIO_CACHE", "data/announcement-cache"))
+        self.output = os.getenv("CMH_SMS_AUDIO_OUTPUT", "browser").lower()
         self.playback_command = os.getenv("CMH_SMS_AUDIO_PLAY_COMMAND", "")
         self.prompt_dir = Path(__file__).with_name("audio")
         # One unbounded FIFO is shared by every doctor. The single worker below
@@ -48,6 +51,7 @@ class AnnouncementEngine:
         self._worker: asyncio.Task[None] | None = None
         self.current_announcement: str | None = None
         self.completed_count = 0
+        self.delivered_count = 0
         self.last_error: str | None = None
         self.last_announcement: str | None = None
         self.announcements_enabled = True
@@ -103,6 +107,7 @@ class AnnouncementEngine:
             language=str(language),
             repeat_count=max(1, min(int(values.get("repeat_count", 1)), 3)),
             rate=max(80, min(int(float(values.get("rate", 0.88)) * 170), 260)),
+            volume=max(0.0, min(float(values.get("volume", 1.0)), 1.0)),
             voice_mode=str(values.get("voice_mode", "auto")),
             cache_max_files=max(10, min(int(values.get("cache_max_files", 40)), 500)),
         )
@@ -113,10 +118,13 @@ class AnnouncementEngine:
     def status(self) -> dict:
         synthesizer = self._synthesizer()
         player = self._player()
+        from .realtime import browser_audio_hub
         return {
             "enabled": self.enabled,
+            "output": self.output,
+            "browser_listeners": browser_audio_hub.connection_count("audio"),
             "announcements_enabled": self.announcements_enabled,
-            "ready": synthesizer is not None and player is not None if self.enabled else False,
+            "ready": (synthesizer is not None or self._offline_neural_ready()) and (self.output == "browser" or player is not None) if self.enabled else False,
             "synthesizer": Path(synthesizer).name if synthesizer else None,
             "player": Path(player).name if player else None,
             "bangla_supported": self._offline_neural_ready() or self._bangla_prompts_available() or self._bangla_supported(synthesizer),
@@ -124,6 +132,7 @@ class AnnouncementEngine:
             "queued": self._queue.qsize(),
             "current_announcement": self.current_announcement,
             "completed_count": self.completed_count,
+            "delivered_count": self.delivered_count,
             "last_announcement": self.last_announcement,
             "last_error": self.last_error,
         }
@@ -140,6 +149,18 @@ class AnnouncementEngine:
                 if not self.announcements_enabled:
                     continue
                 paths = await asyncio.to_thread(self._prepare, item)
+                if self.output == "browser":
+                    if self.announcements_enabled and generation == self._policy_generation:
+                        from .realtime import browser_audio_hub
+                        clips = [base64.b64encode(path.read_bytes()).decode("ascii") for path in paths]
+                        await browser_audio_hub.broadcast("audio", "audio.ready", "announcement",
+                                                          clips=clips, repeat_count=item.repeat_count, volume=item.volume)
+                        self.delivered_count += 1
+                        self.last_announcement = item.token_number
+                    self.last_error = None
+                    # Delivery is recorded separately from physical speaker playback.
+                    log_event("audio.delivered", announcement_id=item.announcement_id)
+                    continue
                 for _ in range(item.repeat_count):
                     for path in paths:
                         if not self.announcements_enabled or generation != self._policy_generation:
@@ -237,12 +258,15 @@ class AnnouncementEngine:
         digest = hashlib.sha256(
             f"v4|{Path(synthesizer).name}|{macos_voice or engine_voice}|{rate}|{text}".encode()
         ).hexdigest()[:24]
-        output = self.cache_dir / f"{digest}.{'aiff' if is_macos_say else 'wav'}"
+        browser_wav = is_macos_say and self.output == "browser"
+        output = self.cache_dir / f"{digest}.{'aiff' if is_macos_say and not browser_wav else 'wav'}"
         if not output.exists():
             if is_macos_say:
                 command = [synthesizer]
                 if macos_voice:
                     command.extend(["-v", macos_voice])
+                if browser_wav:
+                    command.extend(["--data-format=LEI16@24000"])
                 command.extend(["-r", str(rate), "-o", str(output), text])
             else:
                 command = [synthesizer, "-v", engine_voice, "-s", str(rate), "-w", str(output), text]

@@ -133,3 +133,6 @@ class ChangeHub(WaitingRoomHub):
 
 
 change_hub = ChangeHub()
+
+
+browser_audio_hub = WaitingRoomHub()

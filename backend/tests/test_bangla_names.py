@@ -109,6 +109,7 @@ def test_off_blocks_new_announcements_and_discards_queued_audio():
 
 
 def test_muting_during_playback_does_not_resume_old_announcement(monkeypatch, tmp_path):
+    monkeypatch.setenv("CMH_SMS_AUDIO_OUTPUT", "server")
     import asyncio
     engine = AnnouncementEngine()
     engine.enabled = True

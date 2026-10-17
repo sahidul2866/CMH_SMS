@@ -8,7 +8,7 @@ Standalone serial and appointment management product. It borrows the parent HMS'
 - Reception registers patients, schedules appointments, and checks arrivals into the live queue.
 - Doctor sees a live queue, calls next, or calls a selected patient.
 - The waiting-room screen shows the current call and next patients.
-- The backend host queues and plays patient announcements directly through its connected sound output; client browsers remain silent.
+- The backend generates patient announcements; browsers with sound enabled play them through their connected speakers.
 - Authenticated WebSocket change notifications keep reception, radiographer queues, dashboards and displays current. Connected idle screens make no periodic data requests; a 30-second fallback runs only while disconnected or recovering from a failed fetch.
 - Alembic owns the standalone database schema.
 - Seed data provides four waiting rooms, four doctors, and realistic live queues.
@@ -122,37 +122,19 @@ PGPASSWORD="$CMH_SMS_POSTGRES_PASSWORD" pg_dump \
 Stopping the application with `Ctrl+C` leaves the native PostgreSQL service
 running. No Docker installation or container runtime is used.
 
-## Server-PC audio
+## Browser audio
 
-The same PC hosts the frontend, backend, database, WebSocket service and audio
-playback. Connect its USB sound card or 3.5 mm line output to a PA amplifier.
-Calls and recalls from every doctor enter one lossless FIFO announcement queue.
-The Bangla portion uses prerecorded neural-voice prompts around the dynamically
-spoken patient name and token number; the original full English announcement
-follows. The server finishes each announcement before playing the next one, so
-simultaneous doctor calls never overlap.
-On Ubuntu/Debian install the audio tools once:
+Connect the speaker to the device whose browser opens the app. Sign in and click
+**Enable browser sound** at the bottom right. Python generates the existing
+neural Bangla/English voices and streams them to the browser. Calls and recalls
+play in order with the saved volume and repetition settings. Keep the browser
+open; click Enable browser sound again after refreshing. Enable only the browsers
+intended to make announcements. Mute browser sound stops that browser's playback.
 
-```bash
-sudo apt install espeak-ng alsa-utils
-```
-
-macOS uses its built-in `say` and `afplay` commands automatically.
-
-Windows servers use eSpeak NG for dynamic English generation and the
-built-in Windows WAV player. Install the current eSpeak NG Windows package from
-the official project release before starting the application. The executable is
-detected from `PATH` or `C:\Program Files\eSpeak NG\espeak-ng.exe`.
-
-Check `http://127.0.0.1:8100/api/v1/health`. Audio is correctly configured when
-`audio.ready` and `audio.bangla_supported` are both `true`.
-
-Useful environment variables:
-
-- `CMH_SMS_AUDIO_ENABLED=false` disables physical playback.
-- `CMH_SMS_AUDIO_CACHE=/var/lib/cmh-smart-serial/audio` changes the generated WAV cache.
-- `CMH_SMS_AUDIO_PLAY_COMMAND='aplay -D plughw:CARD=Device $file'` selects a specific ALSA output.
-- `CMH_SMS_NGROK=true ./run.sh` enables the optional public tunnel; LAN deployment does not require ngrok.
+`CMH_SMS_AUDIO_OUTPUT=browser` is the default. Set it to `server` and restart to
+restore physical Python/server playback. `CMH_SMS_AUDIO_ENABLED=false` disables
+both modes. Health at `/api/v1/health` reports the output and generation errors;
+`delivered_count` counts browser deliveries, not verified speaker playback.
 
 ## Database commands
 

@@ -25,6 +25,10 @@
 </section>
 
 <div class="app-shell" [class.dashboard-overview]="view === 'dashboard' && !dashboardDetail" [class.display-shell]="view === 'display'" *ngIf="currentUser && !currentUser.must_change_password">
+  <div class="browser-sound" *ngIf="hasPermission('display.view')">
+    <button type="button" (click)="browserAudio.enabled ? browserAudio.disable() : browserAudio.enable()">{{ browserAudio.enabled ? 'Mute browser sound' : 'Enable browser sound' }}</button>
+    <span role="status">{{ browserAudio.status }}</span>
+  </div>
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <aside class="sidebar" *ngIf="view !== 'display'">
     <div class="brand">

@@ -271,6 +271,7 @@ def test_doctor_call_and_recall_are_sent_to_server_speaker(monkeypatch):
 
 
 def test_macos_say_generates_aiff(monkeypatch, tmp_path):
+    monkeypatch.setenv("CMH_SMS_AUDIO_OUTPUT", "server")
     engine = AnnouncementEngine()
     engine.cache_dir = tmp_path
     commands = []
@@ -285,6 +286,7 @@ def test_macos_say_generates_aiff(monkeypatch, tmp_path):
 
 
 def test_macos_bangla_uses_installed_bengali_voice(monkeypatch, tmp_path):
+    monkeypatch.setenv("CMH_SMS_AUDIO_OUTPUT", "server")
     engine = AnnouncementEngine()
     engine.cache_dir = tmp_path
     commands = []
@@ -384,6 +386,7 @@ def test_multiple_doctors_share_one_fifo_audio_queue():
 
 
 def test_audio_worker_finishes_each_call_before_starting_next(monkeypatch):
+    monkeypatch.setenv("CMH_SMS_AUDIO_OUTPUT", "server")
     async def scenario():
         engine = AnnouncementEngine()
         engine.enabled = True

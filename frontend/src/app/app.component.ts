@@ -1,3 +1,4 @@
+import { BrowserAudioService } from './browser-audio.service';
 import { ServiceNumberSuggestion } from './models';
 import { ClientLogService } from './client-log.service';
 import { CommonModule } from '@angular/common';
@@ -24,6 +25,7 @@ const YEAR_START_LOCAL = `${TODAY_LOCAL.slice(0, 4)}-01-01`;
   styleUrl: './app.component.scss',
 })
 export class AppComponent implements OnDestroy {
+  readonly browserAudio = inject(BrowserAudioService);
   private readonly clientLogs = inject(ClientLogService);
   private readonly api = inject(QueueApiService);
   private readonly realtime = inject(RealtimeService);
@@ -630,6 +632,7 @@ export class AppComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.browserAudio.disable();
     this.clearServiceSearch();
     this.refreshScheduler.cancel();
     this.clockSubscription?.unsubscribe();
@@ -667,6 +670,7 @@ export class AppComponent implements OnDestroy {
   }
 
   logout(): void {
+    this.browserAudio.disable();
     if (this.isDemo) { window.location.reload(); return; }
     this.api.logout().subscribe({ complete: () => window.location.reload() });
   }
@@ -1378,12 +1382,16 @@ export class AppComponent implements OnDestroy {
   }
 
   testAnnouncement(setting: AppSetting): void {
+    if (!this.browserAudio.enabled) {
+      this.message = "Click Enable browser sound before testing the voice.";
+      return;
+    }
     this.audioTestBusy = true;
     this.api.testAnnouncement(setting.value).subscribe({
       next: result => {
         this.audioTestBusy = false;
         const label = setting.value['voice_mode'] === 'offline_neural' ? 'Offline neural' : setting.value['voice_mode'] === 'offline' ? 'Basic offline' : 'Automatic';
-        this.message = result.status === 'disabled' ? 'Announcements are off. Save an enabled announcement mode and check that server audio is enabled before testing.' : `${label} voice test queued on the server audio output.`;
+        this.message = result.status === 'disabled' ? 'Announcements are off. Save an enabled announcement mode and check that server audio is enabled before testing.' : `${label} voice test queued for browsers with sound enabled.`;
       },
       error: (error) => {
         this.audioTestBusy = false;
@@ -1892,8 +1900,7 @@ export class AppComponent implements OnDestroy {
   }
 
   private speakDisplay(state: DisplayState): void {
-    // Audio is played centrally by the backend PC connected to the hospital PA.
-    // The display only tracks the latest event; no browser/device sound is used.
+    // Audio arrives on its own channel; display refreshes must not replay calls.
     if (state.current) this.lastSpokenTokenId = state.current.id;
   }
 }
