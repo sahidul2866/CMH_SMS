@@ -1382,16 +1382,12 @@ export class AppComponent implements OnDestroy {
   }
 
   testAnnouncement(setting: AppSetting): void {
-    if (!this.browserAudio.enabled) {
-      this.message = "Click Enable browser sound before testing the voice.";
-      return;
-    }
     this.audioTestBusy = true;
     this.api.testAnnouncement(setting.value).subscribe({
       next: result => {
         this.audioTestBusy = false;
         const label = setting.value['voice_mode'] === 'offline_neural' ? 'Offline neural' : setting.value['voice_mode'] === 'offline' ? 'Basic offline' : 'Automatic';
-        this.message = result.status === 'disabled' ? 'Announcements are off. Save an enabled announcement mode and check that server audio is enabled before testing.' : `${label} voice test queued for browsers with sound enabled.`;
+        this.message = result.status === 'disabled' ? 'Announcements are off. Save an enabled announcement mode and check that server audio is enabled before testing.' : `${label} voice test queued for browser playback, with server speaker fallback.`;
       },
       error: (error) => {
         this.audioTestBusy = false;

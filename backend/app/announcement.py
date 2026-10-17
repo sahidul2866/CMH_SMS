@@ -123,6 +123,7 @@ class AnnouncementEngine:
             "enabled": self.enabled,
             "output": self.output,
             "browser_listeners": browser_audio_hub.connection_count("audio"),
+            "server_fallback": self.output == "browser",
             "announcements_enabled": self.announcements_enabled,
             "ready": (synthesizer is not None or self._offline_neural_ready()) and (self.output == "browser" or player is not None) if self.enabled else False,
             "synthesizer": Path(synthesizer).name if synthesizer else None,
@@ -150,17 +151,19 @@ class AnnouncementEngine:
                     continue
                 paths = await asyncio.to_thread(self._prepare, item)
                 if self.output == "browser":
-                    if self.announcements_enabled and generation == self._policy_generation:
-                        from .realtime import browser_audio_hub
-                        clips = [base64.b64encode(path.read_bytes()).decode("ascii") for path in paths]
-                        await browser_audio_hub.broadcast("audio", "audio.ready", "announcement",
-                                                          clips=clips, repeat_count=item.repeat_count, volume=item.volume)
+                    if not self.announcements_enabled or generation != self._policy_generation:
+                        continue
+                    from .realtime import browser_audio_hub
+                    clips = [base64.b64encode(path.read_bytes()).decode("ascii") for path in paths]
+                    listeners = await browser_audio_hub.deliver(
+                        clips=clips, repeat_count=item.repeat_count, volume=item.volume)
+                    if listeners:
                         self.delivered_count += 1
                         self.last_announcement = item.token_number
-                    self.last_error = None
-                    # Delivery is recorded separately from physical speaker playback.
-                    log_event("audio.delivered", announcement_id=item.announcement_id)
-                    continue
+                        self.last_error = None
+                        log_event("audio.delivered", announcement_id=item.announcement_id, listeners=listeners)
+                        continue
+                    log_event("audio.fallback", source="browser", target="server", reason="no_browser_delivery")
                 for _ in range(item.repeat_count):
                     for path in paths:
                         if not self.announcements_enabled or generation != self._policy_generation:

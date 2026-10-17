@@ -130,6 +130,10 @@ neural Bangla/English voices and streams them to the browser. Calls and recalls
 play in order with the saved volume and repetition settings. Keep the browser
 open; click Enable browser sound again after refreshing. Enable only the browsers
 intended to make announcements. Mute browser sound stops that browser's playback.
+When no sound-enabled browser receives a new announcement, the server plays the
+identical generated clips through its speaker instead. Calls and recalls both use
+this fallback. Muting during a clip takes effect for subsequent announcements;
+the interrupted clip is not replayed on the server.
 
 `CMH_SMS_AUDIO_OUTPUT=browser` is the default. Set it to `server` and restart to
 restore physical Python/server playback. `CMH_SMS_AUDIO_ENABLED=false` disables
