@@ -309,7 +309,7 @@ export class AppComponent implements OnDestroy {
     this.settingsSaving = true;
     return request.pipe(finalize(() => { this.settingsSaving = false; }));
   }
-  requiredFields = ['patient_name', 'rank', 'service_number', 'beneficiary_type', 'patient_source', 'family_relationship'];
+  requiredFields = ['patient_name', 'rank', 'service_number', 'beneficiary_type', 'patient_source', 'family_relationship', 'mri_area'];
   enabledFields: string[] = [];
   patientFormAppearance = {layout: 'modal', font_size: 18};
   registrationFieldsLoaded = false;
@@ -324,7 +324,7 @@ export class AppComponent implements OnDestroy {
   newCustomOptions = '';
   private applyRegistrationFields(data: RegistrationFields): void {
     this.patientFormAppearance = data.appearance ?? {layout: 'modal', font_size: 18};
-    this.requiredFields = data.required; this.enabledFields = data.enabled ?? Object.keys(data.fields);
+    this.requiredFields = [...new Set([...data.required, 'mri_area'])]; this.enabledFields = [...new Set([...(data.enabled ?? Object.keys(data.fields)), 'mri_area'])];
     this.registrationFields = data.fields; this.customFields = data.custom ?? [];
     this.customDraft = JSON.parse(JSON.stringify(this.customFields));
     this.requiredDraft = Object.fromEntries(Object.keys(data.fields).map(key => [key, data.required.includes(key)]));

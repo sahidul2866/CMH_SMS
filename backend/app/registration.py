@@ -18,15 +18,15 @@ FIELDS = {
 }
 
 
-DEFAULT_REQUIRED = ['patient_name', 'rank', 'service_number', 'beneficiary_type', 'patient_source', 'family_relationship']
+DEFAULT_REQUIRED = ['patient_name', 'rank', 'service_number', 'beneficiary_type', 'patient_source', 'family_relationship', 'mri_area']
 
 
 def requirements(db):
     setting = db.get(AppSetting, 'registration_fields')
     value = setting.value if setting else {}
     form_setting = db.get(AppSetting, 'patient_form')
-    return {'appearance': {**FORM_DEFAULTS, **(form_setting.value if form_setting else {})}, 'fields': FIELDS, 'required': value.get('required', DEFAULT_REQUIRED),
-            'enabled': value.get('enabled', list(FIELDS)), 'custom': value.get('custom', [])}
+    return {'appearance': {**FORM_DEFAULTS, **(form_setting.value if form_setting else {})}, 'fields': FIELDS, 'required': list(dict.fromkeys([*value.get('required', DEFAULT_REQUIRED), 'mri_area'])),
+            'enabled': list(dict.fromkeys([*value.get('enabled', list(FIELDS)), 'mri_area'])), 'custom': value.get('custom', [])}
 
 
 def normalize_settings(value, previous):
@@ -35,6 +35,8 @@ def normalize_settings(value, previous):
     for items in [required, enabled]:
         if not isinstance(items, list) or any(not isinstance(key, str) or key not in FIELDS for key in items):
             raise HTTPException(422, 'Select supported registration fields')
+    required = list(dict.fromkeys([*required, 'mri_area']))
+    enabled = list(dict.fromkeys([*enabled, 'mri_area']))
     if 'patient_name' not in required or 'patient_name' not in enabled:
         raise HTTPException(422, 'Patient name must remain enabled and required')
     if not set(required) <= set(enabled):

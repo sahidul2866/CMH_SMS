@@ -1,6 +1,6 @@
 <section class="login-screen" *ngIf="!currentUser">
   <form class="login-card" (ngSubmit)="login()">
-    <div class="brand-mark">CMH</div>
+    <img class="brand-mark cmh-logo" src="/CMH_LOGO.jpg" alt="CMH logo">
     <span class="eyebrow">Authorized personnel only</span>
     <h1>CMH Smart Serial</h1>
     <p>{{ isDemo ? 'Explore the system with local demonstration data. No database or internet connection is required.' : 'Sign in with your assigned hospital account.' }}</p>
@@ -8,6 +8,7 @@
     <label>Password<div class="password-input"><input name="loginPassword" [(ngModel)]="loginForm.password" [ngModelOptions]="{standalone: true}" [type]="showLoginPassword ? 'text' : 'password'" autocomplete="current-password" required><button type="button" (click)="showLoginPassword = !showLoginPassword" [attr.aria-label]="showLoginPassword ? 'Hide password' : 'Show password'">{{ showLoginPassword ? 'Hide' : 'Show' }}</button></div></label>
     <button class="primary" type="submit" [disabled]="loginBusy">{{ loginBusy ? 'Signing in…' : 'Sign in' }}</button></ng-container>
     <button *ngIf="isDemo" class="primary demo-login" type="button" (click)="demoLogin()"><span>Continue as Demo Admin</span><b>→</b></button>
+    <p class="support-contact">Support: <a href="tel:+8801713129946">+880-1713129946</a></p>
     <p class="message" *ngIf="loginError">{{ loginError }}</p>
   </form>
 </section>
@@ -28,7 +29,7 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <aside class="sidebar" *ngIf="view !== 'display'">
     <div class="brand">
-      <div class="brand-mark">CMH</div>
+      <img class="brand-mark cmh-logo" src="/CMH_LOGO.jpg" alt="CMH logo">
       <div><strong>CMH Smart Serial</strong><span>Armed Forces Medical Services</span></div>
     </div>
     <nav aria-label="Primary navigation">
@@ -41,6 +42,7 @@
       <button *ngIf="canView('settings')" type="button" [class.active]="view === 'settings'" [attr.aria-current]="view === 'settings' ? 'page' : null" (click)="setView('settings')"><i>06</i><span>Settings<small>Queue, display & audio</small></span></button>
     </nav>
     <div class="system-status" [class.offline]="dataStatus === 'offline'"><span></span><div><strong>{{ dataStatus === 'online' ? 'System online' : 'Connection interrupted' }}</strong><small>{{ lastSyncedAt ? 'Synced ' + (lastSyncedAt | date:'mediumTime') : 'Connecting to server…' }}</small></div></div>
+    <p class="support-contact">Support: <a href="tel:+8801713129946">+880-1713129946</a></p>
   </aside>
 
   <main id="main-content" tabindex="-1" *ngIf="view !== 'display'" [attr.aria-busy]="isRefreshing">
@@ -163,7 +165,7 @@
               </div>
               <label *ngIf="fieldEnabled('patient_name')">Name <span class="required-mark" [class.missing]="requiredFieldInvalid('patient_name', form.patient_name)" aria-hidden="true">*</span><input name="patientName" [(ngModel)]="form.patient_name" (ngModelChange)="patientNameChanged()" (blur)="suggestBengaliName()" [ngModelOptions]="{standalone: true}" autocomplete="name" required minlength="2" maxlength="160"></label>
               <label *ngIf="fieldEnabled('unit')">Unit <span *ngIf="fieldRequired('unit')" class="required-mark" [class.missing]="requiredFieldInvalid('unit', form.unit)" aria-hidden="true">*</span><input name="unit" [(ngModel)]="form.unit" [ngModelOptions]="{standalone: true}" maxlength="160"></label>
-              <label *ngIf="fieldEnabled('mri_area')">Part of MRI <span *ngIf="fieldRequired('mri_area')" class="required-mark" [class.missing]="requiredFieldInvalid('mri_area', form.mri_area)" aria-hidden="true">*</span><input name="mriArea" [(ngModel)]="form.mri_area" [ngModelOptions]="{standalone: true}" maxlength="240"></label>
+              <label *ngIf="fieldEnabled('mri_area')">Part of MRI <span *ngIf="fieldRequired('mri_area')" class="required-mark" [class.missing]="requiredFieldInvalid('mri_area', form.mri_area)" aria-hidden="true">*</span><input name="mriArea" required [(ngModel)]="form.mri_area" [ngModelOptions]="{standalone: true}" maxlength="240"></label>
               <div class="span-two bengali-field-group">
                 <label>Name in Bengali for announcements (optional)<input name="patientNameBn" [(ngModel)]="form.patient_name_bn" [ngModelOptions]="{standalone: true}" lang="bn" maxlength="480" placeholder="যেমন: মোহাম্মদ রহিম উদ্দিন" [disabled]="busy"></label>
                 <div class="bengali-actions">
@@ -337,7 +339,7 @@
         <div class="required-fields-grid">
           <div class="requirement-option field-policy-row" *ngFor="let field of registrationFields | keyvalue">
             <span><b>{{ field.value }}</b><small>{{ !enabledDraft[field.key] ? 'Disabled — no new input' : requiredDraft[field.key] ? 'Required when applicable' : 'Optional' }}</small></span>
-            <div class="field-policy-controls"><label><input type="checkbox" [ngModel]="enabledDraft[field.key]" (ngModelChange)="setFieldEnabled(field.key, $event)" [disabled]="field.key === 'patient_name' || requiredFieldsBusy" [attr.aria-label]="field.value + ' enabled'" [ngModelOptions]="{standalone: true}">Enabled</label><label><input type="checkbox" [(ngModel)]="requiredDraft[field.key]" [disabled]="field.key === 'patient_name' || !enabledDraft[field.key] || requiredFieldsBusy" [attr.aria-label]="field.value + ' required'" [ngModelOptions]="{standalone: true}">Required</label></div>
+            <div class="field-policy-controls"><label><input type="checkbox" [ngModel]="enabledDraft[field.key]" (ngModelChange)="setFieldEnabled(field.key, $event)" [disabled]="['patient_name', 'mri_area'].includes(field.key) || requiredFieldsBusy" [attr.aria-label]="field.value + ' enabled'" [ngModelOptions]="{standalone: true}">Enabled</label><label><input type="checkbox" [(ngModel)]="requiredDraft[field.key]" [disabled]="['patient_name', 'mri_area'].includes(field.key) || !enabledDraft[field.key] || requiredFieldsBusy" [attr.aria-label]="field.value + ' required'" [ngModelOptions]="{standalone: true}">Required</label></div>
           </div>
         </div>
         <div class="settings-panel-heading"><div><h3>Custom fields</h3><p>Add text, numbers, dates or dropdowns. Disable saved fields to retire them; their previous values remain in patient details and Excel exports.</p></div></div>
@@ -476,10 +478,10 @@
 </ng-template>
 <ng-template #classificationIdentityFields let-draft>
   <label *ngIf="fieldEnabled('beneficiary_type')">Patient type <span *ngIf="fieldRequired('beneficiary_type')" class="required-mark" [class.missing]="requiredFieldInvalid('beneficiary_type', draft.beneficiary_type)" aria-hidden="true">*</span><select [(ngModel)]="draft.beneficiary_type" [ngModelOptions]="{standalone: true}" (ngModelChange)="classificationChanged(draft)"><option value="">Select / needs review</option><option *ngFor="let item of lookup('beneficiary_type')" [value]="item.value">{{ item.label }}</option></select></label>
+  <label *ngIf="fieldEnabled('family_relationship') && ['family', 're'].includes(classificationCode('beneficiary_type', draft.beneficiary_type))">Relationship <span *ngIf="fieldRequired('family_relationship')" class="required-mark" [class.missing]="requiredFieldInvalid('family_relationship', draft.family_relationship)" aria-hidden="true">*</span><select [(ngModel)]="draft.family_relationship" [ngModelOptions]="{standalone: true}" [required]="fieldRequired('family_relationship')"><option value="">Select relationship</option><option *ngFor="let item of relationshipOptions(draft)" [value]="item.value">{{ item.label }}</option></select></label>
 </ng-template>
 <ng-template #classificationDetailFields let-draft>
   <label *ngIf="fieldEnabled('service_status') && (classificationCode('beneficiary_type', draft.beneficiary_type) === 'self' || classificationCode('beneficiary_type', draft.beneficiary_type) === 'family' || classificationCode('entitlement', draft.entitlement) === 'military')">{{ classificationCode('beneficiary_type', draft.beneficiary_type) === 'family' ? 'Sponsor service status' : 'Service status' }} <span *ngIf="fieldRequired('service_status')" class="required-mark" [class.missing]="requiredFieldInvalid('service_status', draft.service_status)" aria-hidden="true">*</span><select [(ngModel)]="draft.service_status" [ngModelOptions]="{standalone: true}"><option value="">Select / needs review</option><option *ngFor="let item of lookup('service_status')" [value]="item.value">{{ item.label }}</option></select></label>
-  <label *ngIf="fieldEnabled('family_relationship') && ['family', 're'].includes(classificationCode('beneficiary_type', draft.beneficiary_type))">Relationship <span *ngIf="fieldRequired('family_relationship')" class="required-mark" [class.missing]="requiredFieldInvalid('family_relationship', draft.family_relationship)" aria-hidden="true">*</span><select [(ngModel)]="draft.family_relationship" [ngModelOptions]="{standalone: true}" [required]="fieldRequired('family_relationship')"><option value="">Select relationship</option><option *ngFor="let item of relationshipOptions(draft)" [value]="item.value">{{ item.label }}</option></select></label>
 </ng-template>
 <app-modal *ngIf="classificationTarget as patient" title="Report classification" [dismissible]="!classificationSaving" (closed)="closeClassification()">
   <form class="simple-form classification-form" (ngSubmit)="saveClassification()">

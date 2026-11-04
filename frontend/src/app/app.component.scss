@@ -201,3 +201,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
 
 .audio-diagnostic { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; overflow-wrap: anywhere; }
+
+.brand-mark.cmh-logo { object-fit: contain; flex-shrink: 0; background: #fff; border-radius: 8px; padding: 3px; box-shadow: none; }
+.support-contact { font-size: 14px; font-weight: 700; line-height: 1.6; }
+.support-contact a { color: inherit; text-decoration: underline; white-space: nowrap; }
+.login-card > .support-contact, .sidebar > .support-contact { padding: 12px; border: 1px solid #b9cec0; border-radius: 8px; background: #edf5ef; color: #123c31; font-size: 14px; }
+.sidebar > .support-contact { margin: 12px 0 0; flex-shrink: 0; }
+@media(min-width:701px) and (max-width:950px) { .sidebar > .support-contact { padding: 6px 2px; font-size: 11px; overflow-wrap: anywhere; } .sidebar > .support-contact a { white-space: normal; } }
+@media(max-width:700px) { .sidebar > .support-contact { position: fixed; bottom: 68px; left: 0; right: 0; margin: 0; padding: 8px 12px; border-radius: 0; text-align: center; box-shadow: 0 -2px 8px #123c3114; } .app-shell { padding-bottom: 124px; } }
