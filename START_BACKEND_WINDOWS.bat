@@ -9,6 +9,10 @@ if not defined CMH_WINDOWS_BACKEND_PORT goto :missing_configuration
 cd /d "%CMH_WINDOWS_BACKEND_DIR%"
 if errorlevel 1 goto :invalid_directory
 
+rem Recorded migrations run once per database; later starts preserve serials.
+"%CMH_WINDOWS_PYTHON%" "%~dp0scripts\windows_postgres.py" alembic upgrade head
+if errorlevel 1 goto :failed
+
 "%CMH_WINDOWS_PYTHON%" "%~dp0scripts\windows_postgres.py" uvicorn app.main:app --host 0.0.0.0 --port %CMH_WINDOWS_BACKEND_PORT%
 if errorlevel 1 goto :failed
 exit /b 0

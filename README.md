@@ -364,3 +364,20 @@ fields for review; it does not copy visit-specific MRI details, priority or room
 assignments. For a family patient, the Rank control directly after Service number
 stores the sponsor’s rank in the same `rank` field used for self patients. Apply migration `20260926_0026` using the normal launcher
 before running this version.
+
+### One-time archive and fresh entry serials
+
+Normal startup (including the Windows BAT launchers) applies migration
+`20261110_0036` once per database. Stop other running app instances before upgrading.
+It copies all patients, appointments, queue entries, call events, audit events,
+SMS messages and registration counters into snapshot tables named
+`history_20261110_0036_<original_table>`, verifies row counts, then clears those
+active tables and sets the next 2026 entry to **12130/26**. Original IDs and all
+columns remain available in the history tables for SQL reporting; they are not
+shown in active patient screens. Users, rooms, schedules and settings are preserved.
+Device event pointers are cleared. Archive creation, deletion and the migration
+marker commit together; a failure rolls back the change. Later startups skip this
+migration and continue the current serial without deleting or archiving again.
+The history tables contain patient data and need the same database backup and
+access protection as the active tables. Automatic downgrade is disabled to avoid
+mixing archived records with new registrations. Restart the app after upgrading.

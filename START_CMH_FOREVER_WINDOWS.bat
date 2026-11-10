@@ -17,6 +17,13 @@ for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass
 set "CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1,10.0.0.0/8"
 if defined LAN_IP set "CMH_SMS_ALLOWED_HOSTS=!CMH_SMS_ALLOWED_HOSTS!,!LAN_IP!"
 
+rem Apply pending migrations once before entering the server restart loop.
+pushd "%BACKEND_DIR%"
+"%VENV_PYTHON%" "%PROJECT_DIR%scripts\windows_postgres.py" alembic upgrade head
+set "MIGRATION_EXIT=!ERRORLEVEL!"
+popd
+if not "!MIGRATION_EXIT!"=="0" exit /b !MIGRATION_EXIT!
+
 :run
 echo [%DATE% %TIME%] Starting CMH Smart Serial...
 pushd "%BACKEND_DIR%"
