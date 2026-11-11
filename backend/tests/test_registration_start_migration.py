@@ -26,7 +26,7 @@ def test_startup_applies_serial_start_only_once(tmp_path):
     environment = {**os.environ, 'CMH_SMS_DATABASE_MODE': 'sqlite',
                    'CMH_SMS_DATABASE_URL': f'sqlite:///{database}'}
     def startup():
-        subprocess.run([sys.executable, '-m', 'alembic', 'upgrade', 'head'],
+        subprocess.run([sys.executable, '-m', 'alembic', 'upgrade', '20261110_0036'],
                        cwd=Path(__file__).resolve().parents[1], env=environment,
                        check=True, capture_output=True, text=True, timeout=30)
     startup()

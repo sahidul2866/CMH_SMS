@@ -47,8 +47,8 @@ export interface MonthlySummary {
   date_from: string; date_to: string;
   month: string | null; basis: string;
   columns: {key: string; group: string; label: string}[];
-  rows: {date: string; counts: Record<string, number>; total: number}[];
-  totals: Record<string, number>; total: number;
+  rows: {date: string; counts: Record<string, number>; total: number; verified: number; pending: number}[];
+  totals: Record<string, number>; total: number; verified: number; pending: number;
 }
 
 export interface QueueToken extends PatientClassification {
@@ -58,6 +58,11 @@ export interface QueueToken extends PatientClassification {
   summary_category_source?: 'automatic' | 'manual';
   id: string;
   token_number: string;
+  report_verified?: boolean;
+  report_verified_at?: string | null;
+  report_verified_by?: string | null;
+  report_radiologist?: string | null;
+  sequence?: number;
   serial_number?: string | null;
   age?: number | null;
   unit?: string | null;
@@ -95,7 +100,7 @@ export interface ReceptionReportRow extends QueueToken {
   completed_at?: string | null;
 }
 
-export interface QueueReport { total: number; by_status: Record<string, number>; by_doctor: Record<string, number>; by_room: Record<string, number>; by_source: Record<string, number>; priority: number; }
+export interface QueueReport { by_report_verification: Record<string, number>; total: number; by_status: Record<string, number>; by_doctor: Record<string, number>; by_room: Record<string, number>; by_source: Record<string, number>; priority: number; }
 export interface RadiographerDashboardRow {
   doctor_id: string; doctor_name: string; department: string; room_number: string; waiting_room: string;
   waiting: number; called: number; in_progress: number; completed: number; total: number; average_wait_minutes: number; vip: number;
@@ -105,6 +110,7 @@ export interface DashboardRoom {
   waiting: number; called: number; in_progress: number; completed: number; total: number; average_wait_minutes: number; vip: number;
 }
 export interface RadiographyDashboard {
+  report_verified: number; report_pending: number;
   scope: 'assigned' | 'all'; generated_at: string; total: number; waiting: number; called: number;
   in_progress: number; completed: number; average_wait_minutes: number;
   vip_total: number; vip_waiting: number; vip_active: number; vip_completed: number;

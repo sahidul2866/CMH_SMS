@@ -476,6 +476,7 @@ class QueueService:
 
     def display(self, waiting_room: str) -> DisplayRead:
         clinical_fields = dict.fromkeys(("age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "ward_text", "beneficiary_type", "service_status", "entitlement", "family_relationship", "summary_category"))
+        clinical_fields.update(report_verified=False, report_verified_at=None, report_verified_by=None, report_radiologist=None)
         room_tokens = [token.model_copy(update=clinical_fields) for token in self.list_tokens(waiting_room=waiting_room)]
         all_tokens = [token.model_copy(update=clinical_fields) for token in self.list_tokens()]
         active_calls = sorted(

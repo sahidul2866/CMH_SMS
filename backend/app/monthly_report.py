@@ -301,9 +301,13 @@ def summary(db, month, basis, date_from=None, date_to=None):
     for token in records:
         key = token.summary_category if token.summary_category in keys else 'unclassified'
         days[record_day(token, basis).isoformat()][key] += 1
-    rows = [{'date': day, 'counts': counts, 'total': sum(counts.values())} for day, counts in days.items()]
+    verification = {day: 0 for day in days}
+    for token in records:
+        verification[record_day(token, basis).isoformat()] += int(token.report_verified)
+    rows = [{'date': day, 'counts': counts, 'total': sum(counts.values()),
+             'verified': verification[day], 'pending': sum(counts.values()) - verification[day]} for day, counts in days.items()]
     totals = {key: sum(row['counts'][key] for row in rows) for key in keys}
-    return {'date_from': start.isoformat(), 'date_to': (end - timedelta(days=1)).isoformat(), 'month': month, 'basis': basis, 'columns': [{'key': key, 'group': group, 'label': label} for key, group, label in COLUMNS], 'rows': rows, 'totals': totals, 'total': len(records)}
+    return {'date_from': start.isoformat(), 'date_to': (end - timedelta(days=1)).isoformat(), 'month': month, 'basis': basis, 'columns': [{'key': key, 'group': group, 'label': label} for key, group, label in COLUMNS], 'rows': rows, 'totals': totals, 'total': len(records), 'verified': sum(verification.values()), 'pending': len(records) - sum(verification.values())}
 
 
 @router.get('/reports/mri-summary')
@@ -383,12 +387,12 @@ def export_summary(format: Literal['xlsx', 'pdf'], month: str | None = Query(def
     note = ('Registrations (including cancelled registrations)' if basis == 'registrations' else 'Completed MRIs by completion date (Asia/Dhaka)')
     if review:
         note += ' | Needs review: included in total, pending classification'
-    first = ['DATE', 'SERVING', '', '', '', '', 'RETD (MIL)', '', 'FAMILY', '', '', 'RE', 'CNE'] + (['NEEDS REVIEW'] if review else []) + ['TOTAL']
-    second = [''] + [c[2] for c in COLUMNS[:10]] + ['', ''] + ([''] if review else []) + ['']
+    first = ['DATE', 'SERVING', '', '', '', '', 'RETD (MIL)', '', 'FAMILY', '', '', 'RE', 'CNE'] + (['NEEDS REVIEW'] if review else []) + ['TOTAL', 'VERIFIED', 'PENDING']
+    second = [''] + [c[2] for c in COLUMNS[:10]] + ['', ''] + ([''] if review else []) + ['', '', '']
     data = [first, second]
     for row in report['rows']:
-        data.append([date.fromisoformat(row['date']).strftime('%d.%m.%y')] + [row['counts'][key] for key in keys] + [row['total']])
-    data.append(['TOTAL'] + [report['totals'][key] for key in keys] + [report['total']])
+        data.append([date.fromisoformat(row['date']).strftime('%d.%m.%y')] + [row['counts'][key] for key in keys] + [row['total'], row['verified'], row['pending']])
+    data.append(['TOTAL'] + [report['totals'][key] for key in keys] + [report['total'], report['verified'], report['pending']])
     spans = [(1, 5), (6, 7), (8, 10)]
     out = BytesIO()
     if format == 'xlsx':
@@ -402,7 +406,7 @@ def export_summary(format: Literal['xlsx', 'pdf'], month: str | None = Query(def
             sheet.append(row)
         for left, right in spans:
             sheet.merge_cells(start_row=6, start_column=left+1, end_row=6, end_column=right+1)
-        for col in [0, 11, 12] + ([13] if review else []) + [len(first)-1]:
+        for col in [0, 11, 12] + ([13] if review else []) + [len(first)-3, len(first)-2, len(first)-1]:
             sheet.merge_cells(start_row=6, start_column=col+1, end_row=7, end_column=col+1)
         from openpyxl.utils import get_column_letter
         for col in range(1, len(first)+1):
@@ -436,7 +440,7 @@ def export_summary(format: Literal['xlsx', 'pdf'], month: str | None = Query(def
         table = Table(data, colWidths=[55] + [(785-55)/(len(first)-1)]*(len(first)-1), repeatRows=2)
         commands = [('GRID', (0,0), (-1,-1), .4, colors.grey), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('FONTSIZE', (0,0), (-1,-1), 7), ('TOPPADDING', (0,0), (-1,-1), 3), ('BOTTOMPADDING', (0,0), (-1,-1), 3), ('BACKGROUND', (0,0), (-1,1), colors.HexColor('#edf2ef')), ('FONTNAME',(0,-1),(-1,-1),'Helvetica-Bold')]
         commands += [('SPAN', (left,0), (right,0)) for left,right in spans]
-        commands += [('SPAN',(col,0),(col,1)) for col in [0,11,12] + ([13] if review else []) + [len(first)-1]]
+        commands += [('SPAN',(col,0),(col,1)) for col in [0,11,12] + ([13] if review else []) + [len(first)-3, len(first)-2, len(first)-1]]
         table.setStyle(TableStyle(commands))
         SimpleDocTemplate(out, pagesize=landscape(A4), leftMargin=25, rightMargin=25, topMargin=15, bottomMargin=15).build([Paragraph('DEPARTMENT OF RADIOLOGY & IMAGING<br/>CMH DHAKA<br/>' + title + '<br/>MRI CENTRE', styles['Normal']), Paragraph(note, styles['Normal']), table])
         media = 'application/pdf'

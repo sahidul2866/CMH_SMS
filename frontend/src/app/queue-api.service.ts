@@ -55,6 +55,8 @@ export class QueueApiService {
   suggestBengaliName(patientName: string) {
     return this.http.post<{patient_name_bn: string; needs_review: boolean}>(`${this.baseUrl}/bengali-name-suggestion`, {patient_name: patientName});
   }
+  verifyReport(id: string) { return this.http.patch<QueueToken>(`${this.baseUrl}/tokens/${id}/report-verification`, {}); }
+  verificationSummary(params: Record<string, string>) { return this.http.get<{total: number; verified: number; pending: number}>(`${this.baseUrl}/reports/verification-summary`, {params}); }
   registrationPreview() { return this.http.get<{ serial_number: string; date: string }>(`${this.baseUrl}/registration-preview`); }
 
   createToken(payload: Record<string, unknown>) {
@@ -113,10 +115,10 @@ export class QueueApiService {
   }
 
   report() { return this.http.get<QueueReport>(`${this.baseUrl}/reports/queue-summary`); }
-  dashboardPatients(status: string, priority = 'all') { return this.http.get<QueueToken[]>(`${this.baseUrl}/dashboard/patients`, { params: { status, priority } }); }
+  dashboardPatients(status: string, params: Record<string, string> = {}) { return this.http.get<QueueToken[]>(`${this.baseUrl}/dashboard/patients`, { params: { ...params, status } }); }
   availablePatients(doctorId: string) { return this.http.get<QueueToken[]>(`${this.baseUrl}/doctors/${doctorId}/available-patients`); }
   claimPatient(doctorId: string, tokenId: string) { return this.http.post<QueueToken>(`${this.baseUrl}/doctors/${doctorId}/claim/${tokenId}`, {}); }
-  dashboard(priority = 'all') { return this.http.get<RadiographyDashboard>(`${this.baseUrl}/dashboard`, {params: {priority}}); }
+  dashboard(params: Record<string, string> = {}) { return this.http.get<RadiographyDashboard>(`${this.baseUrl}/dashboard`, {params}); }
   monthlySummary(params: Record<string, string>) { return this.http.get<MonthlySummary>(`${this.baseUrl}/reports/mri-summary`, { params }); }
   summaryPatients(params: Record<string, string>) { return this.http.get<QueueToken[]>(`${this.baseUrl}/reports/mri-summary/patients`, { params }); }
   summaryExport(format: 'xlsx' | 'pdf', params: Record<string, string>) { return this.http.get(`${this.baseUrl}/reports/mri-summary.${format}`, { params, responseType: 'blob' }); }

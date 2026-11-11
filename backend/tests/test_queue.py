@@ -76,6 +76,7 @@ def token_payload(name="Rahim Uddin"):
         "waiting_room": "WR-1",
         "source": "walk_in",
         "priority": "normal",
+        "mri_area": "Brain",
         "patient_source": "opd",
         "beneficiary_type": "self",
     }
@@ -168,7 +169,7 @@ def test_reception_report_filters_and_exports_complete_excel_table():
     assert sheet.auto_filter.ref == sheet.dimensions
     assert sheet.freeze_panes == "F2"
     assert sheet["E2"].value == "Priority Patient"
-    assert sheet.max_column == 36
+    assert sheet.max_column == 39
     assert sheet.max_row == 2
 
     pdf = client.get("/api/v1/reports/reception.pdf", params=params)

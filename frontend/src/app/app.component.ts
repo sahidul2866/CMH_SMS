@@ -58,6 +58,78 @@ export class AppComponent implements OnDestroy {
   detailLoading = false;
   detailError = '';
   patientDetail: QueueToken | null = null;
+  savedEntry: QueueToken | null = null;
+  verificationTarget: QueueToken | null = null;
+  verificationBusy = false;
+  verificationError = '';
+  dashboardFrom = TODAY_LOCAL;
+  dashboardTo = TODAY_LOCAL;
+  dashboardDoctor = '';
+  dashboardVerification = '';
+  dashboardFilterDraft = {date_from: TODAY_LOCAL, date_to: TODAY_LOCAL, priority: 'all' as 'all' | 'vip' | 'non_vip', doctor_id: '', report_verified: ''};
+  openDashboardFilters(): void {
+    this.dashboardFilterDraft = {date_from: this.dashboardFrom, date_to: this.dashboardTo, priority: this.dashboardPriority,
+      doctor_id: this.dashboardDoctor, report_verified: this.dashboardVerification};
+    this.editor = 'dashboard-filters';
+  }
+  applyDashboardFilters(): void {
+    this.dashboardFrom = this.dashboardFilterDraft.date_from; this.dashboardTo = this.dashboardFilterDraft.date_to;
+    this.dashboardPriority = this.dashboardFilterDraft.priority; this.dashboardDoctor = this.dashboardFilterDraft.doctor_id;
+    this.dashboardVerification = this.dashboardFilterDraft.report_verified;
+    this.editor = ''; this.filterDashboard();
+  }
+  get dashboardParams(): Record<string, string> {
+    return Object.fromEntries(Object.entries({date_from: this.dashboardFrom, date_to: this.dashboardTo,
+      priority: this.dashboardPriority, doctor_id: this.dashboardDoctor, report_verified: this.dashboardVerification}).filter(([, value]) => value !== ''));
+  }
+  get dashboardPeriodLabel(): string {
+    return this.dashboardFrom === TODAY_LOCAL && this.dashboardTo === TODAY_LOCAL ? 'Today' : `${this.dashboardFrom} – ${this.dashboardTo}`;
+  }
+  canVerifyReport(token: QueueToken): boolean {
+    return this.hasPermission('reports.verify') && !token.report_verified
+      && !['cancelled', 'no_show'].includes(token.status)
+      && ((this.currentUser?.access_profile || this.currentUser?.role) !== 'radiographer'
+        || (!!this.currentUser?.doctor_id && token.doctor_id === this.currentUser.doctor_id));
+  }
+  openRowActions(id: string, event: MouseEvent): void {
+    const menu = document.getElementById(id);
+    const trigger = event.currentTarget as HTMLElement;
+    if (!menu) return;
+    menu.showPopover();
+    const rect = trigger.getBoundingClientRect();
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    menu.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
+    menu.style.top = `${Math.max(8, rect.bottom + height + 8 < window.innerHeight ? rect.bottom + 6 : rect.top - height - 6)}px`;
+  }
+  openVerification(token: QueueToken): void {
+    this.patientDetail = null; this.savedEntry = null;
+    this.verificationTarget = token; this.verificationError = '';
+  }
+  saveVerification(): void {
+    if (!this.verificationTarget || this.verificationBusy) return;
+    this.verificationBusy = true;
+    this.api.verifyReport(this.verificationTarget.id).subscribe({
+      next: token => {
+        this.verificationBusy = false; this.verificationTarget = null;
+        if (this.patientDetail?.id === token.id) this.patientDetail = token;
+        this.receptionReportRows = this.receptionReportRows.map(row => row.id === token.id ? {...row, ...token} : row);
+        this.notify('Report verification saved'); this.refresh();
+      },
+      error: error => { this.verificationBusy = false; this.verificationError = this.apiErrorMessage(error, 'Could not verify report.'); }
+    });
+  }
+  addAnotherBodyPart(token: QueueToken): void {
+    this.savedEntry = null; this.patientDetail = null;
+    this.editWaitingPatient(token);
+    this.editingPatientId = '';
+    this.form.mri_area = this.form.report = '';
+    this.form.contrast = this.form.film = null;
+    this.registrationSerial = '';
+    this.api.registrationPreview().subscribe({next: preview => {
+      this.registrationSerial = preview.serial_number; this.registrationServerDate = preview.date;
+    }, error: () => this.registrationSerial = 'Assigned when saved'});
+  }
   editor = '';
   editingSetting: AppSetting | null = null;
   editingDoctor: Doctor | null = null;
@@ -215,7 +287,7 @@ export class AppComponent implements OnDestroy {
     });
   }
   receptionReportRows: ReceptionReportRow[] = [];
-  reportFilters = { date_from: YEAR_START_LOCAL, date_to: TODAY_LOCAL, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '' };
+  reportFilters = { date_from: YEAR_START_LOCAL, date_to: TODAY_LOCAL, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '', report_verified: '' };
   reportLoading = false;
   reportExporting = false;
   reportPdfExporting = false;
@@ -716,6 +788,11 @@ export class AppComponent implements OnDestroy {
   }
 
   loadDashboard(): void { this.refresh(); }
+  resetDashboardFilters(): void {
+    this.dashboardFrom = this.dashboardTo = TODAY_LOCAL;
+    this.dashboardPriority = 'all'; this.dashboardDoctor = ''; this.dashboardVerification = '';
+    this.filterDashboard();
+  }
   filterDashboard(): void {
     this.dashboardLoading = true;
     this.loadDashboard();
@@ -887,7 +964,7 @@ export class AppComponent implements OnDestroy {
     return this.doctors.find((doctor) => doctor.id === this.selectedDoctorId) ?? this.doctors[0] ?? EMPTY_DOCTOR;
   }
 
-  get waiting(): QueueToken[] { return this.activeQueue.filter(token => token.status === 'waiting'); }
+  get waiting(): QueueToken[] { return this.activeQueue.filter(token => token.status === 'waiting').sort((a, b) => b.created_at.localeCompare(a.created_at) || (b.sequence || 0) - (a.sequence || 0)); }
 
   get callableWaiting(): QueueToken[] { return this.waiting.filter((token) => token.priority !== 'vip' && this.canManageAssignment(token)); }
 
@@ -1044,6 +1121,7 @@ export class AppComponent implements OnDestroy {
 
   get hasActiveReportFilters(): boolean {
     return Boolean(
+      this.reportFilters.report_verified ||
       this.reportFilters.beneficiary_type ||
       this.reportFilters.contrast ||
       this.reportFilters.doctor_id ||
@@ -1055,6 +1133,7 @@ export class AppComponent implements OnDestroy {
   }
 
   resetReportFilters(): void {
+    this.reportFilters.report_verified = '';
     this.reportFilters.beneficiary_type = '';
     this.reportFilters.contrast = '';
     this.reportFilters.doctor_id = '';
@@ -1141,7 +1220,7 @@ export class AppComponent implements OnDestroy {
       this.message = 'Patient name must contain at least 2 characters.';
       return;
     }
-    if (this.missingTokenFields.length || this.bengaliSuggestionLoading) return;
+    if (this.busy || this.missingTokenFields.length || this.bengaliSuggestionLoading) return;
     this.busy = true;
     const payload = this.enabledPayload({
       ...this.form,
@@ -1163,6 +1242,7 @@ export class AppComponent implements OnDestroy {
     request.subscribe({
       next: (token) => {
         this.notify(`Patient ${this.editingPatientId ? 'updated' : 'added'} · ${token.serial_number || token.token_number}`);
+        this.savedEntry = token;
         this.form.beneficiary_type = this.form.service_status = this.form.entitlement = this.form.family_relationship = '';
         this.form.priority = 'normal';
         this.customValues = {};
@@ -1678,7 +1758,7 @@ export class AppComponent implements OnDestroy {
 
   private currentRefreshContext(): string {
     if (this.view === 'doctor') return `${this.view}|${this.selectedDoctorId}|${this.doctorOpened}`;
-    if (this.view === 'dashboard') return `${this.view}|${this.dashboardDetail}|${this.dashboardPriority}`;
+    if (this.view === 'dashboard') return `${this.view}|${this.dashboardDetail}|${JSON.stringify(this.dashboardParams)}`;
     if (this.view === 'display') return `${this.view}|${this.selectedWaitingRoom}`;
     return this.view;
   }
@@ -1727,8 +1807,8 @@ export class AppComponent implements OnDestroy {
     if (showIndicator) this.isRefreshing = true;
     let settled = false;
     const request = forkJoin({
-      dashboard: view === 'dashboard' ? this.api.dashboard(this.dashboardPriority) : of(null),
-      patients: view === 'dashboard' && !!this.dashboardDetail ? this.api.dashboardPatients(this.dashboardDetail, this.dashboardPriority) : of(null),
+      dashboard: view === 'dashboard' ? this.api.dashboard(this.dashboardParams) : of(null),
+      patients: view === 'dashboard' && !!this.dashboardDetail ? this.api.dashboardPatients(this.dashboardDetail, this.dashboardParams) : of(null),
       display: view === 'display' && !!this.selectedWaitingRoom ? this.api.display(this.selectedWaitingRoom) : of(null),
       occupancy: view === 'doctor' && this.hasPermission('queue.view') ? this.api.radiographerStatus() : of(null),
       tokens: view === 'reception' ? this.api.listTokens('') : view === 'doctor' && this.doctorOpened && !!this.selectedDoctorId ? this.api.listTokens(this.selectedDoctorId, true) : of(null),
@@ -1808,7 +1888,7 @@ export class AppComponent implements OnDestroy {
     const url = new URL(window.location.href); url.searchParams.set('detail', detail); window.history.pushState({}, '', url); this.clientLogs.navigation();
     this.loadDashboardPatients(); window.scrollTo({ top: 0 });
   }
-  get dashboardDetailTitle(): string { return ({ all: 'All patients today', waiting: 'Waiting patients', called: 'Called patients', in_progress: 'Patients in service', completed: 'Completed patients', vip: 'VIP patients', wait: 'Average wait time per room' } as Record<string,string>)[this.dashboardDetail] || 'Patients'; }
+  get dashboardDetailTitle(): string { return ({ all: 'All patients', verified: 'Reports verified', unverified: 'Reports pending verification', waiting: 'Waiting patients', called: 'Called patients', in_progress: 'Patients in service', completed: 'Completed patients', vip: 'VIP patients', wait: 'Average wait time per room' } as Record<string,string>)[this.dashboardDetail] || 'Patients'; }
   get dashboardRooms(): DashboardRoom[] {
     if (this.dashboard?.rooms?.length) {
       return this.dashboard.rooms;
@@ -1853,7 +1933,7 @@ export class AppComponent implements OnDestroy {
     this.api.claimPatient(this.selectedDoctorId, token.id).subscribe({ next: updated => { this.actionBusy = false; this.editor = ''; this.notify(`Patient assigned to room ${updated.room_number}`); this.refresh(); }, error: error => { this.actionBusy = false; this.message = this.apiErrorMessage(error, 'Patient is no longer available.'); this.refresh(); } });
   }
   exportTodayReport(): void {
-    this.reportFilters = { date_from: this.registrationDate, date_to: this.registrationDate, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '' };
+    this.reportFilters = { date_from: this.registrationDate, date_to: this.registrationDate, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '', report_verified: '' };
     this.loadReceptionReport(); this.exportReceptionReportPdf();
   }
 

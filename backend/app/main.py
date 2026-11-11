@@ -531,6 +531,7 @@ PERMISSION_CATALOG = [
     {"key": "pages.display", "label": "Open Waiting Display", "group": "Pages"},
     {"key": "pages.reports", "label": "Open Reports & Audit", "group": "Pages"},
     {"key": "pages.dashboard", "label": "Open Radiography Dashboard", "group": "Pages"},
+    {"key": "reports.verify", "label": "Verify entry reports", "group": "Reports"},
     {"key": "queue.supplies.update", "label": "Update film and contrast counts", "group": "Queue"},
     {"key": "queue.serial.create", "label": "Generate patient serials", "group": "Queue"},
     {"key": "queue.view", "label": "View permitted queue", "group": "Queue"},
@@ -997,6 +998,27 @@ def service_number_suggestions(q: str = Query(min_length=2, max_length=40), offs
     return {"items": [dict(row) for row in rows[:50]], "has_more": len(rows) > 50}
 
 
+
+@app.patch("/api/v1/tokens/{token_id}/report-verification", response_model=TokenRead)
+def verify_report(token_id: str,
+                  user: User = Depends(require_permission("reports.verify")), db: Session = Depends(get_db)):
+    token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
+    if not token:
+        raise HTTPException(404, "Entry not found")
+    if user_access_profile(user, db) == 'radiographer' and (not user.doctor_id or token.doctor_id != user.doctor_id):
+        raise HTTPException(403, "Only entries assigned to your room can be verified")
+    if token.status in ('cancelled', 'no_show'):
+        raise HTTPException(409, "Cannot verify a cancelled or absent entry")
+    if not token.report_verified:
+        token.report_verified = True
+        token.report_verified_at = datetime.utcnow()
+        token.report_verified_by = user.username
+        db.add(AuditEvent(action='token.report_verified', actor=user.username, token_id=token.id,
+                          detail={'verified_by': user.username, 'serial_number': token.serial_number}))
+        db.commit()
+    return QueueService(db)._read(token)
+
+
 @app.patch("/api/v1/tokens/{token_id}/supplies", response_model=TokenRead)
 def update_token_supplies(token_id: str, payload: TokenSuppliesUpdate,
                           user: User = Depends(require_permission("queue.supplies.update")), db: Session = Depends(get_db)):
@@ -1044,7 +1066,10 @@ def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depen
             changes.pop("patient_name_bn", None)
     if token.summary_category_source != "manual":
         changes["summary_category"] = classify(db, payload)
-    before = {key: getattr(token, key) for key in changes}
+    if token.report_verified and any(key in changes and changes[key] != getattr(token, key)
+                                     for key in ('patient_name', 'service_number', 'mri_area', 'report')):
+        changes.update(report_verified=False, report_verified_at=None, report_verified_by=None, report_radiologist=None)
+    before = {key: (getattr(token, key).isoformat() if isinstance(getattr(token, key), datetime) else getattr(token, key)) for key in changes}
     for key, value in changes.items():
         setattr(token, key, value)
     db.add(AuditEvent(action="token.edited", actor=user.username, token_id=token.id, detail={"before": before, "after": changes}))
@@ -1482,24 +1507,49 @@ async def waiting_room_realtime(websocket: WebSocket, waiting_room: str):
         await waiting_room_hub.disconnect(waiting_room, websocket)
 
 
+def dashboard_filters(
+    date_from: date = Query(default_factory=date.today),
+    date_to: date = Query(default_factory=date.today),
+    priority: Literal["all", "vip", "non_vip"] = "all",
+    doctor_id: str | None = None,
+    report_verified: bool | None = None,
+):
+    if date_from > date_to or (date_to - date_from).days > 366:
+        raise HTTPException(422, "Select a valid date range of at most 367 days")
+    return dict(date_from=date_from, date_to=date_to, priority=priority,
+                doctor_id=doctor_id, report_verified=report_verified)
+
+
+def dashboard_token_query(filters, user, db):
+    statement = select(QueueToken).where(QueueToken.token_date.between(filters['date_from'], filters['date_to']))
+    if user_access_profile(user, db) == 'radiographer':
+        if not user.doctor_id:
+            return statement.where(QueueToken.id.is_(None))
+        statement = statement.where(or_(QueueToken.doctor_id == user.doctor_id, QueueToken.status == 'waiting'))
+    if filters['doctor_id']:
+        statement = statement.where(QueueToken.doctor_id == filters['doctor_id'])
+    if filters['priority'] != 'all':
+        statement = statement.where((QueueToken.priority == 'vip') if filters['priority'] == 'vip' else (QueueToken.priority != 'vip'))
+    if filters['report_verified'] is not None:
+        statement = statement.where(QueueToken.report_verified == filters['report_verified'])
+    return statement
+
+
 @app.get("/api/v1/dashboard/patients", response_model=list[TokenRead])
 def dashboard_patients(
-    status: str = "all", priority: Literal["all", "vip", "non_vip"] = "all",
+    status: str = "all", filters: dict = Depends(dashboard_filters),
     user: User = Depends(require_permission("dashboard.view")), db: Session = Depends(get_db)
 ):
-    if status not in {"all", "waiting", "called", "in_progress", "completed", "vip", "wait"}:
+    if status not in {"all", "waiting", "called", "in_progress", "completed", "vip", "wait", "verified", "unverified"}:
         raise HTTPException(422, "Unknown dashboard detail")
-    doctor_id = user.doctor_id if user_access_profile(user, db) == "radiographer" else None
-    if user_access_profile(user, db) == "radiographer" and not doctor_id:
-        return []
-    tokens = QueueService(db).list_tokens(doctor_id=doctor_id, shared_waiting=bool(doctor_id))
-    if priority != "all":
-        tokens = [token for token in tokens if (token.priority == "vip") == (priority == "vip")]
-    if status in {"all", "wait"}:
-        return tokens
-    if status == "vip":
-        return [token for token in tokens if token.priority == "vip"]
-    return [token for token in tokens if token.status in ({"called", "recalled"} if status == "called" else {status})]
+    statement = dashboard_token_query(filters, user, db)
+    if status == 'vip':
+        statement = statement.where(QueueToken.priority == 'vip')
+    elif status in {'verified', 'unverified'}:
+        statement = statement.where(QueueToken.report_verified == (status == 'verified'))
+    elif status not in {'all', 'wait'}:
+        statement = statement.where(QueueToken.status.in_({'called', 'recalled'} if status == 'called' else {status}))
+    return [QueueService(db)._read(token) for token in db.scalars(statement.order_by(QueueToken.created_at.desc(), QueueToken.sequence.desc()))]
 
 
 @app.get("/api/v1/doctors/{doctor_id}/available-patients", response_model=list[TokenRead])
@@ -1525,8 +1575,7 @@ async def claim_patient(
 
 
 @app.get("/api/v1/dashboard", response_model=DashboardRead)
-def dashboard(priority: Literal["all", "vip", "non_vip"] = "all", user: User = Depends(require_permission("dashboard.view")), db: Session = Depends(get_db)):
-    today = date.today()
+def dashboard(filters: dict = Depends(dashboard_filters), user: User = Depends(require_permission("dashboard.view")), db: Session = Depends(get_db)):
     assigned_only = user_access_profile(user, db) == "radiographer"
     doctor_stmt = (
         select(Doctor, WaitingRoom)
@@ -1536,15 +1585,10 @@ def dashboard(priority: Literal["all", "vip", "non_vip"] = "all", user: User = D
     if assigned_only:
         doctor_stmt = doctor_stmt.where(Doctor.id == user.doctor_id)
     doctors = list(db.execute(doctor_stmt.order_by(Doctor.department, Doctor.name)).all())
-    doctor_ids = [doctor.id for doctor, _ in doctors]
-    token_stmt = select(QueueToken).where(QueueToken.token_date == today)
-    if assigned_only:
-        token_stmt = token_stmt.where(or_(QueueToken.doctor_id == user.doctor_id, QueueToken.status == "waiting"))
-    if priority == "vip":
-        token_stmt = token_stmt.where(QueueToken.priority == "vip")
-    elif priority == "non_vip":
-        token_stmt = token_stmt.where(QueueToken.priority != "vip")
-    tokens = list(db.scalars(token_stmt)) if doctor_ids or not assigned_only else []
+    if filters['doctor_id']:
+        doctors = [(doctor, room) for doctor, room in doctors if doctor.id == filters['doctor_id']]
+    tokens = list(db.scalars(dashboard_token_query(filters, user, db)))
+
 
     def metrics(items: list[QueueToken]) -> tuple[dict[str, int], int]:
         counts: dict[str, int] = {}
@@ -1621,6 +1665,8 @@ def dashboard(priority: Literal["all", "vip", "non_vip"] = "all", user: User = D
 
     return DashboardRead(
         scope="assigned" if assigned_only else "all", generated_at=datetime.utcnow(), total=len(tokens),
+        report_verified=sum(token.report_verified for token in tokens),
+        report_pending=sum(not token.report_verified for token in tokens),
         waiting=counts.get("waiting", 0),
         called=counts.get("called", 0) + counts.get("recalled", 0),
         in_progress=counts.get("in_progress", 0),
@@ -1774,6 +1820,7 @@ def queue_report(_: User = Depends(require_permission("reports.view")), db: Sess
     return {
         "total": len(tokens),
         "by_status": grouped("status"),
+        "by_report_verification": {"Verified": sum(t.report_verified for t in tokens), "Pending": sum(not t.report_verified for t in tokens)},
         "by_doctor": grouped("doctor_name"),
         "by_department": grouped("department"),
         "by_room": grouped("waiting_room"),
@@ -1801,6 +1848,7 @@ def reception_report_query(
     service_category: str | None,
     beneficiary_type: str | None = None,
     contrast: str | None = None,
+    report_verified: bool | None = None,
 ) -> list[QueueToken]:
     if date_from > date_to:
         raise HTTPException(422, "From date must not be after to date")
@@ -1816,6 +1864,8 @@ def reception_report_query(
     ):
         if value:
             statement = statement.where(field == value)
+    if report_verified is not None:
+        statement = statement.where(QueueToken.report_verified == report_verified)
     if beneficiary_type:
         types = [t.strip().lower() for t in beneficiary_type.split(",") if t.strip()]
         if types:
@@ -1831,7 +1881,7 @@ def reception_report_query(
             statement = statement.where(QueueToken.contrast.is_not(None), QueueToken.contrast > 0)
         elif normalized in {"none", "no", "false", "0"}:
             statement = statement.where(or_(QueueToken.contrast.is_(None), QueueToken.contrast <= 0))
-    return list(db.scalars(statement.order_by(QueueToken.token_date.desc(), QueueToken.created_at.desc())))
+    return list(db.scalars(statement.order_by(QueueToken.token_date.desc(), QueueToken.created_at.desc(), QueueToken.sequence.desc())))
 
 
 def reception_report_params(
@@ -1844,13 +1894,29 @@ def reception_report_params(
     service_category: str | None = None,
     beneficiary_type: str | None = None,
     contrast: str | None = None,
+    report_verified: bool | None = None,
 ) -> dict[str, object]:
     return {
         "date_from": date_from, "date_to": date_to, "doctor_id": doctor_id,
         "waiting_room": waiting_room, "status_filter": status,
         "priority": priority, "service_category": service_category,
-        "beneficiary_type": beneficiary_type, "contrast": contrast,
+        "beneficiary_type": beneficiary_type, "contrast": contrast, "report_verified": report_verified,
     }
+
+
+@app.get("/api/v1/reports/verification-summary")
+def verification_summary(priority_scope: Literal["all", "vip", "non_vip"] = "all",
+                         filters: dict[str, object] = Depends(reception_report_params),
+                         user: User = Depends(require_permission("dashboard.view")), db: Session = Depends(get_db)):
+    if user_access_profile(user, db) == 'radiographer':
+        if not user.doctor_id:
+            return {'total': 0, 'verified': 0, 'pending': 0}
+        filters['doctor_id'] = user.doctor_id
+    tokens = reception_report_query(db, **filters)
+    if priority_scope != 'all':
+        tokens = [token for token in tokens if (token.priority == 'vip') == (priority_scope == 'vip')]
+    verified = sum(token.report_verified for token in tokens)
+    return {'total': len(tokens), 'verified': verified, 'pending': len(tokens) - verified}
 
 
 @app.get("/api/v1/reports/reception")
@@ -1880,7 +1946,7 @@ def reception_report_excel(
         "MRI Area", "Contrast", "Film", "Report", "Patient Source", "Priority", "Room", "Radiographer", "Status",
         "Created At", "Called At", "Service Started At", "Completed At", "Cancelled At", "Skipped At",
         "Recalled At", "No Show At", "Scheduled At", "Recall Count", "Mobile Number", "Service Category",
-        "Department", "Waiting Room", "Registration Type", "Patient Type", "Entitlement", "Service Status", "Family Relationship", "Summary Category",
+        "Department", "Waiting Room", "Registration Type", "Patient Type", "Entitlement", "Service Status", "Family Relationship", "Summary Category", "Report Verified", "Verified At", "Verified By",
     ]
     from .registration import requirements
     custom = requirements(db)['custom']
@@ -1902,6 +1968,7 @@ def reception_report_excel(
             token.patient_phone, token.service_category, token.department, token.waiting_room, token.source,
             label("beneficiary_type", token.beneficiary_type), label("entitlement", token.entitlement), label("service_status", token.service_status),
             label("family_relationship", token.family_relationship), token.summary_category or "Needs review",
+            "Yes" if token.report_verified else "No", token.report_verified_at, token.report_verified_by or "",
         ] + [(token.custom_fields or {}).get(field['key'], '') for field in custom])
     sheet.freeze_panes = "F2"
     sheet.auto_filter.ref = sheet.dimensions
@@ -1969,7 +2036,7 @@ def reception_report_pdf(
     ]
     headers = [
         RECEPTION_ID_HEADER, "Date", "Service No./BA", RECEPTION_RANK_HEADER, "Type", "Name", "Age", "Unit",
-        "MRI area", "Contrast", "Film", "Report", "Patient source", "Priority / Room",
+        "MRI area", "Contrast", "Film", "Report", "Patient source", "Priority / Room", "Report verified",
     ]
     rows = [headers]
     cell_style = styles["BodyText"].clone("RegisterCell")
@@ -1980,10 +2047,11 @@ def reception_report_pdf(
         values = [token.serial_number or token.token_number, str(token.token_date), token.service_number or "",
             label("rank_relationship", token.rank), token_type, token.patient_name, token.age, token.unit or "", token.mri_area or "",
             token.contrast, token.film, token.report or "", " · ".join(filter(None, [label("patient_source", token.patient_source), token.ward_text])),
-            f"{label('priority_category', token.priority)} / {token.room_number}"]
+            f"{label('priority_category', token.priority)} / {token.room_number}",
+            f"Yes · {token.report_verified_by}" if token.report_verified else "Pending"]
         rows.append([Paragraph(escape(str(value)) if value is not None else "", cell_style) for value in values])
     table = LongTable(rows, repeatRows=1, splitInRow=1,
-        colWidths=[18*mm, 17*mm, 20*mm, 22*mm, 14*mm, 26*mm, 9*mm, 18*mm, 24*mm, 12*mm, 9*mm, 42*mm, 20*mm, 22*mm])
+        colWidths=[18*mm, 17*mm, 20*mm, 22*mm, 14*mm, 26*mm, 9*mm, 18*mm, 24*mm, 12*mm, 9*mm, 34*mm, 18*mm, 20*mm, 18*mm])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123C31")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),

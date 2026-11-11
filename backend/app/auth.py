@@ -25,7 +25,7 @@ LEGACY_ROLE_PERMISSIONS = {
         "appointments.view", "appointments.manage", "appointments.check_in", "schedule.view",
     },
     "radiographer": {
-        "pages.reception", "queue.serial.create", "queue.supplies.update",
+        "pages.reception", "queue.serial.create", "queue.supplies.update", "reports.verify",
         "pages.radiographer", "pages.dashboard", "pages.reports", "dashboard.view", "reports.view",
         "directory.view", "master_data.view", "queue.view",
         "queue.call", "queue.action", "queue.pause", "audio.announce",

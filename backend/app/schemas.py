@@ -56,6 +56,10 @@ class TokenRead(TokenCreate):
 
     id: str
     token_number: str
+    report_verified: bool = False
+    report_verified_at: datetime | None = None
+    report_verified_by: str | None = None
+    report_radiologist: str | None = None
     serial_number: str | None = None
     summary_category: str | None = None
     summary_category_source: Literal["automatic", "manual"] = "automatic"
@@ -112,6 +116,8 @@ class DashboardRoomRead(BaseModel):
 
 
 class DashboardRead(BaseModel):
+    report_verified: int = 0
+    report_pending: int = 0
     scope: Literal["assigned", "all"]
     generated_at: datetime
     total: int

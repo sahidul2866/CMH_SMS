@@ -381,3 +381,25 @@ migration and continue the current serial without deleting or archiving again.
 The history tables contain patient data and need the same database backup and
 access protection as the active tables. Automatic downgrade is disabled to avoid
 mixing archived records with new registrations. Restart the app after upgrading.
+
+### Entry confirmation and report verification
+
+Saving an entry shows its assigned serial and saved information. “Add another body
+part” copies patient details into a new entry, leaving the MRI area and report empty;
+each save receives its own database-enforced unique serial. Reception waiting
+entries and reception reports show newest entries first; clinical call priority
+is unchanged.
+
+Settings → Roles includes **Verify entry reports** (`reports.verify`).
+The feature migration enables it for the built-in administrator and radiographer
+roles. Other roles can be granted or denied it in Settings. Radiographers can
+verify entries assigned to their room; administrators can verify any entry.
+Verification records the logged-in user and the time, with
+an audit event. Changing a verified entry's patient name, service number, MRI area
+or report clears verification so the changed entry must be verified again.
+
+The dashboard includes verified/pending cards alongside existing metrics. Shared date, priority, room and verification filters apply to every dashboard card, chart and patient list, defaulting to today.
+Reception reports support verified/pending filtering and include verification in
+Excel/PDF exports. Queue reports and MRI summaries include verified/pending counts.
+Apply normal startup migrations to enable the feature; this migration preserves
+existing entries and serial counters.
