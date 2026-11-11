@@ -1005,8 +1005,6 @@ def verify_report(token_id: str,
     token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
     if not token:
         raise HTTPException(404, "Entry not found")
-    if user_access_profile(user, db) == 'radiographer' and (not user.doctor_id or token.doctor_id != user.doctor_id):
-        raise HTTPException(403, "Only entries assigned to your room can be verified")
     if token.status in ('cancelled', 'no_show'):
         raise HTTPException(409, "Cannot verify a cancelled or absent entry")
     if not token.report_verified:

@@ -392,8 +392,7 @@ is unchanged.
 
 Settings → Roles includes **Verify entry reports** (`reports.verify`).
 The feature migration enables it for the built-in administrator and radiographer
-roles. Other roles can be granted or denied it in Settings. Radiographers can
-verify entries assigned to their room; administrators can verify any entry.
+roles. Other roles can be granted or denied it in Settings. Users with verification permission can verify entries in any room, including unassigned entries.
 Verification records the logged-in user and the time, with
 an audit event. Changing a verified entry's patient name, service number, MRI area
 or report clears verification so the changed entry must be verified again.
@@ -403,3 +402,5 @@ Reception reports support verified/pending filtering and include verification in
 Excel/PDF exports. Queue reports and MRI summaries include verified/pending counts.
 Apply normal startup migrations to enable the feature; this migration preserves
 existing entries and serial counters.
+
+The Rooms list Actions menu includes **Complete without calling** for waiting entries. It assigns an unassigned entry to the selected room, records completion and an audit event, and preserves its serial. It does not generate a call, announcement or artificial service-start time. Other-room entries remain protected by room assignment permissions.

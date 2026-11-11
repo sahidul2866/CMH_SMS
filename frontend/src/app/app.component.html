@@ -245,6 +245,7 @@
               <button type="button" *ngIf="hasPermission('audio.announce') && canAction(token, 'recall') && token.priority !== 'vip'" (click)="queueAction(token, 'recall')">Recall</button>
               <button type="button" *ngIf="canEditSupplies(token)" (click)="openSupplies(token)">Film / contrast</button>
               <button type="button" *ngIf="canAction(token, 'start')" (click)="queueAction(token, 'start')">Start</button>
+              <button type="button" *ngIf="canAction(token, 'complete_without_call')" (click)="queueAction(token, 'complete_without_call')" [disabled]="actionBusy">Complete without calling</button>
               <button type="button" *ngIf="canAction(token, 'complete')" (click)="complete(token)">Complete</button>
               <button type="button" *ngIf="canAction(token, 'skip')" (click)="queueAction(token, 'skip')">Skip</button>
               <button type="button" *ngIf="canAction(token, 'no_show')" (click)="queueAction(token, 'no_show')">No show</button>

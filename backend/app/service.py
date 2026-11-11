@@ -247,7 +247,7 @@ class QueueService:
         token = self.db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update().execution_options(populate_existing=True))
         if not token or token.token_date != date.today():
             raise HTTPException(404, "Patient not found")
-        if token.doctor_id != doctor_id and not (token.status == "waiting" and action in {"call_physically", "cancel"}):
+        if token.doctor_id != doctor_id and not (token.status == "waiting" and action in {"call_physically", "cancel", "complete_without_call"}):
             raise HTTPException(409, "This patient is already being handled by another radiographer")
         if action in {"call_physically", "start", "recall"}:
             self.require_assignment_owner(token, doctor)
@@ -255,6 +255,7 @@ class QueueService:
             "start": ({"waiting", "called", "recalled"}, "in_progress"),
             "call_physically": ({"waiting", "skipped"}, "in_progress"),
             "complete": ({"in_progress"}, "completed"),
+            "complete_without_call": ({"waiting"}, "completed"),
             "skip": ({"called", "recalled"}, "skipped"),
             "recall": ({"skipped", "called", "recalled"}, "recalled"),
             "no_show": ({"called", "recalled", "skipped"}, "no_show"),
@@ -269,6 +270,18 @@ class QueueService:
             raise HTTPException(422, "A reason is required for this action")
         if action == "call_physically" and token.priority != "vip":
             raise HTTPException(409, "Physical calling is reserved for VIP patients")
+        if action == "complete_without_call":
+            unassigned = not token.doctor_id and not token.room_number
+            if not unassigned and not self.can_manage_assignment(token, doctor):
+                raise HTTPException(403, "Only entries assigned to your room can be completed")
+            room = self.db.get(WaitingRoom, doctor.waiting_room_id)
+            if not room or not room.is_active:
+                raise HTTPException(409, "Room has no active waiting area")
+            if token.doctor_id != doctor.id:
+                token.sequence = self.db.scalar(select(func.coalesce(func.max(QueueToken.sequence), 0)).where(
+                    QueueToken.doctor_id == doctor.id, QueueToken.token_date == date.today())) + 1
+            token.doctor_id, token.doctor_name = doctor.id, doctor.name
+            token.department, token.room_number, token.waiting_room = doctor.department, doctor.room_number, room.code
         previous_status = token.status
         if action == "recall":
             if token.priority == "vip":
@@ -281,6 +294,7 @@ class QueueService:
             "start": "started_at",
             "call_physically": "started_at",
             "complete": "completed_at",
+            "complete_without_call": "completed_at",
             "skip": "skipped_at",
             "recall": "recalled_at",
             "no_show": "no_show_at",

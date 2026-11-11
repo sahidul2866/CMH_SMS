@@ -87,9 +87,7 @@ export class AppComponent implements OnDestroy {
   }
   canVerifyReport(token: QueueToken): boolean {
     return this.hasPermission('reports.verify') && !token.report_verified
-      && !['cancelled', 'no_show'].includes(token.status)
-      && ((this.currentUser?.access_profile || this.currentUser?.role) !== 'radiographer'
-        || (!!this.currentUser?.doctor_id && token.doctor_id === this.currentUser.doctor_id));
+      && !['cancelled', 'no_show'].includes(token.status);
   }
   openRowActions(id: string, event: MouseEvent): void {
     const menu = document.getElementById(id);
@@ -1746,8 +1744,8 @@ export class AppComponent implements OnDestroy {
 
   canAction(token: QueueToken, action: string): boolean {
     if (!this.hasPermission('queue.action')) return false;
-    if (['call_physically', 'start', 'recall'].includes(action) && !this.canManageAssignment(token)) return false;
-    const states: Record<string, string[]> = { start: ['called', 'recalled'], complete: ['in_progress'], skip: ['called', 'recalled'], recall: ['skipped', 'called', 'recalled'], no_show: ['called', 'recalled', 'skipped'], cancel: ['waiting', 'called', 'recalled', 'skipped', 'in_progress'] };
+    if (['call_physically', 'start', 'recall', 'complete_without_call'].includes(action) && !this.canManageAssignment(token)) return false;
+    const states: Record<string, string[]> = { start: ['called', 'recalled'], complete: ['in_progress'], complete_without_call: ['waiting'], skip: ['called', 'recalled'], recall: ['skipped', 'called', 'recalled'], no_show: ['called', 'recalled', 'skipped'], cancel: ['waiting', 'called', 'recalled', 'skipped', 'in_progress'] };
     if (action === 'call_physically') return token.priority === 'vip' && ['waiting', 'skipped'].includes(token.status);
     return states[action]?.includes(token.status) || false;
   }

@@ -135,7 +135,7 @@ class DashboardRead(BaseModel):
 
 
 class QueueActionRequest(BaseModel):
-    action: Literal["start", "call_physically", "complete", "skip", "recall", "no_show", "cancel"]
+    action: Literal["start", "call_physically", "complete", "complete_without_call", "skip", "recall", "no_show", "cancel"]
     reason: str | None = Field(default=None, max_length=240)
 
 

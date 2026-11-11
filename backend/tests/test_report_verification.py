@@ -54,7 +54,7 @@ def test_verification_requires_permission():
     assert response.status_code == 403
 
 
-def test_role_permission_is_configurable_and_radiographer_room_is_enforced():
+def test_role_permission_is_configurable_and_verification_is_not_room_restricted():
     from app.auth import LEGACY_ROLE_PERMISSIONS
     entry = client.post('/api/v1/tokens', json=token_payload()).json()
     # Custom roles can receive or lose the new permission through Settings APIs.
@@ -79,7 +79,7 @@ def test_role_permission_is_configurable_and_radiographer_room_is_enforced():
     assert client.patch(f"/api/v1/tokens/{other['id']}/report-verification", json={}).status_code == 403
     client.cookies.clear()
     client.post('/api/v1/auth/login', json={'username': 'rad', 'password': 'RadioPass123!'}).raise_for_status()
-    assert client.patch(f"/api/v1/tokens/{other['id']}/report-verification", json={}).status_code == 403
+    assert client.patch(f"/api/v1/tokens/{other['id']}/report-verification", json={}).status_code == 200
     assert client.patch(f"/api/v1/tokens/{entry['id']}/report-verification", json={}).status_code == 200
 
 
