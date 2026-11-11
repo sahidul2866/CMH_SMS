@@ -1,3 +1,5 @@
+import pytest
+from datetime import datetime
 from sqlalchemy import select
 from app.database import SessionLocal
 from app.models import AuditEvent, CallEvent, Doctor, QueueToken
@@ -30,3 +32,26 @@ def test_direct_completion_cannot_take_another_rooms_entry_or_bypass_normal_comp
     url = f"/api/v1/doctors/dr-khan/tokens/{entry['id']}/action"
     assert client.post(url, json={'action': 'complete'}).status_code == 409
     assert client.post(url, json={'action': 'complete_without_call'}).status_code == 200
+
+
+@pytest.mark.parametrize('status', ['called', 'recalled'])
+def test_called_entry_can_complete_directly_without_rewriting_call_history(status):
+    entry = client.post('/api/v1/tokens', json=token_payload()).json()
+    called_at = datetime(2026, 11, 11, 8, 0)
+    with SessionLocal() as db:
+        token = db.get(QueueToken, entry['id'])
+        token.status = status
+        token.called_at = called_at
+        db.commit()
+    url = f"/api/v1/doctors/dr-khan/tokens/{entry['id']}/action"
+    response = client.post(url, json={'action': 'complete_without_call'})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['status'] == 'completed'
+    assert result['serial_number'] == entry['serial_number']
+    assert result['called_at'] == called_at.isoformat()
+    assert result['started_at'] is None and result['completed_at']
+    with SessionLocal() as db:
+        assert list(db.scalars(select(CallEvent))) == []
+        audit = db.scalar(select(AuditEvent).where(AuditEvent.action == 'queue.complete_without_call'))
+        assert audit.previous_status == status and audit.new_status == 'completed'

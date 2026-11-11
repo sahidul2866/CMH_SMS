@@ -403,4 +403,4 @@ Excel/PDF exports. Queue reports and MRI summaries include verified/pending coun
 Apply normal startup migrations to enable the feature; this migration preserves
 existing entries and serial counters.
 
-The Rooms list Actions menu includes **Complete without calling** for waiting entries. It assigns an unassigned entry to the selected room, records completion and an audit event, and preserves its serial. It does not generate a call, announcement or artificial service-start time. Other-room entries remain protected by room assignment permissions.
+The Rooms list Actions menu includes **Complete without calling** for waiting, called and recalled entries. It assigns an unassigned entry to the selected room, records completion and an audit event, and preserves its serial. It does not generate a call, announcement or artificial service-start time. Other-room entries remain protected by room assignment permissions.

@@ -255,7 +255,7 @@ class QueueService:
             "start": ({"waiting", "called", "recalled"}, "in_progress"),
             "call_physically": ({"waiting", "skipped"}, "in_progress"),
             "complete": ({"in_progress"}, "completed"),
-            "complete_without_call": ({"waiting"}, "completed"),
+            "complete_without_call": ({"waiting", "called", "recalled"}, "completed"),
             "skip": ({"called", "recalled"}, "skipped"),
             "recall": ({"skipped", "called", "recalled"}, "recalled"),
             "no_show": ({"called", "recalled", "skipped"}, "no_show"),

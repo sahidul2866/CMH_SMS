@@ -1745,7 +1745,7 @@ export class AppComponent implements OnDestroy {
   canAction(token: QueueToken, action: string): boolean {
     if (!this.hasPermission('queue.action')) return false;
     if (['call_physically', 'start', 'recall', 'complete_without_call'].includes(action) && !this.canManageAssignment(token)) return false;
-    const states: Record<string, string[]> = { start: ['called', 'recalled'], complete: ['in_progress'], complete_without_call: ['waiting'], skip: ['called', 'recalled'], recall: ['skipped', 'called', 'recalled'], no_show: ['called', 'recalled', 'skipped'], cancel: ['waiting', 'called', 'recalled', 'skipped', 'in_progress'] };
+    const states: Record<string, string[]> = { start: ['called', 'recalled'], complete: ['in_progress'], complete_without_call: ['waiting', 'called', 'recalled'], skip: ['called', 'recalled'], recall: ['skipped', 'called', 'recalled'], no_show: ['called', 'recalled', 'skipped'], cancel: ['waiting', 'called', 'recalled', 'skipped', 'in_progress'] };
     if (action === 'call_physically') return token.priority === 'vip' && ['waiting', 'skipped'].includes(token.status);
     return states[action]?.includes(token.status) || false;
   }
