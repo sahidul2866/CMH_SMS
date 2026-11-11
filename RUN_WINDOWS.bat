@@ -19,6 +19,12 @@ echo.
 
 if not exist "%BACKEND_DIR%\requirements.txt" goto :missing_project
 if not exist "%FRONTEND_DIR%\package.json" goto :missing_project
+
+rem Stop this project server before migrating or replacing built frontend files.
+echo Stopping any running CMH server before updating...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%scripts\stop_source_server.ps1" -ProjectDir "%PROJECT_DIR%." -Port %BACKEND_PORT%
+if errorlevel 1 goto :failed
+
 if not exist "%SETUP_DIR%" mkdir "%SETUP_DIR%"
 
 set "PYTHON_CMD=%CMH_SMS_PYTHON_CMD%"
@@ -114,10 +120,6 @@ if errorlevel 1 (
 popd
 if not exist "%FRONTEND_DIR%\dist\cmh-smart-serial\browser\index.html" if not exist "%FRONTEND_DIR%\dist\cmh-smart-serial\index.html" goto :frontend_missing
 
-echo       Checking the application port...
-call :free_port %BACKEND_PORT%
-if errorlevel 1 goto :failed
-
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ip=(Get-NetIPAddress -AddressFamily IPv4 ^| Where-Object {$_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown'} ^| Sort-Object InterfaceMetric ^| Select-Object -First 1 -ExpandProperty IPAddress); if($ip){$ip}else{'SERVER-PC-IP'}"`) do set "LAN_IP=%%I"
 set "CMH_SMS_ALLOWED_HOSTS=localhost,127.0.0.1,10.0.0.0/8"
 if not "!LAN_IP!"=="SERVER-PC-IP" set "CMH_SMS_ALLOWED_HOSTS=!CMH_SMS_ALLOWED_HOSTS!,!LAN_IP!"
@@ -148,6 +150,12 @@ if errorlevel 1 (
 ) else (
     echo Backend is ready.
 )
+
+rem Readiness alone does not prove that the running API is the current version.
+echo Checking running server action compatibility...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop'; try { $api=Invoke-RestMethod 'http://127.0.0.1:%BACKEND_PORT%/openapi.json' -TimeoutSec 10; $actions=@($api.components.schemas.QueueActionRequest.properties.action.enum); if($actions -notcontains 'complete_without_call'){Write-Host 'ERROR: The running backend does not support Complete without calling. Deploy the current backend files and restart the server.'; exit 1} } catch { Write-Host 'ERROR: Could not verify the running backend version.'; exit 1 }"
+if errorlevel 1 goto :failed
 
 start "" "http://127.0.0.1:%BACKEND_PORT%"
 
@@ -269,14 +277,6 @@ if not exist "%~1" exit /b 0
 for /f "usebackq delims=" %%H in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath '%~1').Hash"`) do set "%~2=%%H"
 exit /b 0
 
-:free_port
-for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -State Listen -LocalPort %~1 -ErrorAction SilentlyContinue ^| Select-Object -ExpandProperty OwningProcess -Unique"`) do (
-    echo ERROR: Port %~1 is already used by PID %%P.
-    echo Stop the existing service explicitly, then run this launcher again.
-    exit /b 1
-)
-exit /b 0
-
 :missing_project
 echo ERROR: backend or frontend project files are missing.
 echo Place this BAT file in the root CMH_SMS folder and run it again.
@@ -302,5 +302,6 @@ goto :failed
 echo.
 echo SETUP FAILED. Read the error above, correct it, and run this file again.
 echo Completed steps will be detected and skipped automatically.
+echo If automatic recovery was paused, it stays paused until setup succeeds.
 pause
 exit /b 1

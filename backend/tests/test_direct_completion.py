@@ -55,3 +55,21 @@ def test_called_entry_can_complete_directly_without_rewriting_call_history(statu
         assert list(db.scalars(select(CallEvent))) == []
         audit = db.scalar(select(AuditEvent).where(AuditEvent.action == 'queue.complete_without_call'))
         assert audit.previous_status == status and audit.new_status == 'completed'
+
+
+def test_radiographer_can_complete_assigned_and_unassigned_entries_directly():
+    from app.auth import hash_password, LEGACY_ROLE_PERMISSIONS
+    from app.models import RoleDefinition, User
+    own = client.post('/api/v1/tokens', json=token_payload()).json()
+    unassigned = client.post('/api/v1/tokens', json={**token_payload(), 'doctor_id': None}).json()
+    with SessionLocal() as db:
+        db.add(RoleDefinition(name='radiographer', display_name='Radiographer', access_profile='radiographer', permissions=sorted(LEGACY_ROLE_PERMISSIONS['radiographer'])))
+        db.add(User(username='rad', full_name='Radiographer', role='radiographer', doctor_id='dr-khan', password_hash=hash_password('RadioPass123!')))
+        db.commit()
+    client.cookies.clear()
+    client.post('/api/v1/auth/login', json={'username': 'rad', 'password': 'RadioPass123!'}).raise_for_status()
+    for entry in (own, unassigned):
+        response = client.post(f"/api/v1/doctors/dr-khan/tokens/{entry['id']}/action", json={'action': 'complete_without_call'})
+        assert response.status_code == 200, response.text
+        assert response.json()['status'] == 'completed'
+        assert response.json()['serial_number'] == entry['serial_number']

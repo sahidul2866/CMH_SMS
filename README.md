@@ -404,3 +404,13 @@ Apply normal startup migrations to enable the feature; this migration preserves
 existing entries and serial counters.
 
 The Rooms list Actions menu includes **Complete without calling** for waiting, called and recalled entries. It assigns an unassigned entry to the selected room, records completion and an audit event, and preserves its serial. It does not generate a call, announcement or artificial service-start time. Other-room entries remain protected by room assignment permissions.
+
+### Updating a running Windows source installation
+
+Run `RUN_WINDOWS.bat` from the deployed project folder as Administrator. It pauses
+the matching CMH scheduled task, stops this project's running server and restart
+loop, then applies migrations and builds the frontend. Successful setup enables
+automatic recovery again and starts the updated server. A different application
+on port 8100, or a CMH task pointing at another folder, is left untouched and
+reported as an error. If setup fails, recovery stays paused; fix the reported
+error and rerun the same BAT file to finish the update.

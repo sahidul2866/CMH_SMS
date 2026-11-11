@@ -1399,7 +1399,15 @@ export class AppComponent implements OnDestroy {
     this.actionBusy = true;
     this.api.action(this.view === 'doctor' ? this.selectedDoctorId : token.doctor_id || this.selectedDoctorId, token.id, action, reason).subscribe({
       next: () => { this.actionBusy = false; this.actionDialog = null; this.notify(`${token.serial_number || token.token_number} · ${action === 'call_physically' ? 'Called physically' : action.replaceAll('_', ' ')}`); this.refresh(); },
-      error: error => { this.actionBusy = false; this.message = this.apiErrorMessage(error, 'Action could not be completed.'); },
+      error: error => {
+        this.actionBusy = false;
+        const details = error?.error?.detail;
+        const oldServer = action === 'complete_without_call' && error?.status === 422 && Array.isArray(details)
+          && details.some((item: any) => item?.type === 'literal_error' && item?.loc?.includes('action'));
+        this.message = oldServer
+          ? 'The server is running an older version. Update the backend files and restart the server on the server PC, then refresh this page.'
+          : this.apiErrorMessage(error, 'Action could not be completed.');
+      },
     });
   }
   openAction(token: QueueToken, action: string): void {
