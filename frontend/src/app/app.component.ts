@@ -112,9 +112,9 @@ export class AppComponent implements OnDestroy {
         this.verificationBusy = false; this.verificationTarget = null;
         if (this.patientDetail?.id === token.id) this.patientDetail = token;
         this.receptionReportRows = this.receptionReportRows.map(row => row.id === token.id ? {...row, ...token} : row);
-        this.notify('Report verification saved'); this.refresh();
+        this.notify('Entry marked as reported'); this.refresh();
       },
-      error: error => { this.verificationBusy = false; this.verificationError = this.apiErrorMessage(error, 'Could not verify report.'); }
+      error: error => { this.verificationBusy = false; this.verificationError = this.apiErrorMessage(error, 'Could not mark entry as reported.'); }
     });
   }
   addAnotherBodyPart(token: QueueToken): void {
@@ -285,7 +285,7 @@ export class AppComponent implements OnDestroy {
     });
   }
   receptionReportRows: ReceptionReportRow[] = [];
-  reportFilters = { date_from: YEAR_START_LOCAL, date_to: TODAY_LOCAL, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '', report_verified: '' };
+  reportFilters = { date_from: YEAR_START_LOCAL, date_to: TODAY_LOCAL, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '', report_verified: '', service_number: '' };
   reportLoading = false;
   reportExporting = false;
   reportPdfExporting = false;
@@ -502,7 +502,6 @@ export class AppComponent implements OnDestroy {
   suppliesSaving = false;
   canEditSupplies(token: QueueToken): boolean {
     return this.hasPermission('queue.supplies.update') && !['cancelled', 'no_show'].includes(token.status)
-      && (token.status !== 'completed' || this.isAdmin)
       && ((this.currentUser?.access_profile || this.currentUser?.role) !== 'radiographer' || (!!this.currentUser?.doctor_id && token.doctor_id === this.currentUser.doctor_id));
   }
   openSupplies(token: QueueToken): void {
@@ -514,11 +513,18 @@ export class AppComponent implements OnDestroy {
     if (!this.suppliesPatient || this.suppliesSaving) return;
     this.suppliesSaving = true;
     this.api.updateSupplies(this.suppliesPatient.id, this.suppliesDraft).subscribe({
-      next: updated => { this.suppliesSaving = false; this.suppliesPatient = null; if (this.patientDetail?.id === updated.id) this.patientDetail = updated; this.notify('Film and contrast saved'); this.refresh(); },
+      next: updated => { this.suppliesSaving = false; this.suppliesPatient = null; if (this.patientDetail?.id === updated.id) this.patientDetail = updated; this.notify('Film and contrast saved'); if (this.view === 'reception-report') this.loadReceptionReport(); this.refresh(); },
       error: error => { this.suppliesSaving = false; this.message = this.apiErrorMessage(error, 'Could not save film and contrast.'); }
     });
   }
+  canEditEntry(token: QueueToken): boolean {
+    return this.hasPermission('queue.serial.create')
+      && ((this.currentUser?.access_profile || this.currentUser?.role) !== 'radiographer'
+        || !token.doctor_id || token.doctor_id === this.currentUser?.doctor_id);
+  }
   editWaitingPatient(token: QueueToken): void {
+    this.patientDetail = null; this.savedEntry = null;
+    this.loadLookups();
     this.clearServiceSearch();
     this.resetBengaliSuggestion();
     this.loadRegistrationFields();
@@ -716,6 +722,8 @@ export class AppComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    clearTimeout(this.reportServiceSearchTimer);
+    this.reportSearchRequest?.unsubscribe();
     this.audioDiagnosticSubscription?.unsubscribe();
     this.clearServiceSearch();
     this.refreshScheduler.cancel();
@@ -1067,13 +1075,27 @@ export class AppComponent implements OnDestroy {
     }
   }
 
+  private reportServiceSearchTimer: ReturnType<typeof setTimeout> | undefined;
+  private reportSearchRequest?: Subscription;
+  reportServiceNumberChanged(): void {
+    clearTimeout(this.reportServiceSearchTimer);
+    this.reportSearchRequest?.unsubscribe();
+    this.reportLoading = true;
+    if (!this.reportFilters.service_number.trim()) { this.loadReceptionReport(); return; }
+    this.reportServiceSearchTimer = setTimeout(() => this.loadReceptionReport(), 300);
+  }
+  clearReportServiceSearch(): void {
+    this.reportFilters.service_number = ''; this.loadReceptionReport();
+  }
   private receptionReportParams(): Record<string, string> {
     return Object.fromEntries(Object.entries(this.reportFilters).filter(([, value]) => value));
   }
 
   loadReceptionReport(): void {
     this.reportLoading = true;
-    this.api.receptionReport(this.receptionReportParams()).subscribe({
+    clearTimeout(this.reportServiceSearchTimer);
+    this.reportSearchRequest?.unsubscribe();
+    this.reportSearchRequest = this.api.receptionReport(this.receptionReportParams()).subscribe({
       next: (rows) => { this.receptionReportRows = rows; this.reportLoading = false; },
       error: (error) => { this.message = error?.error?.detail || 'Could not load the reception report.'; this.reportLoading = false; },
     });
@@ -1119,6 +1141,7 @@ export class AppComponent implements OnDestroy {
 
   get hasActiveReportFilters(): boolean {
     return Boolean(
+      this.reportFilters.service_number ||
       this.reportFilters.report_verified ||
       this.reportFilters.beneficiary_type ||
       this.reportFilters.contrast ||
@@ -1131,6 +1154,7 @@ export class AppComponent implements OnDestroy {
   }
 
   resetReportFilters(): void {
+    this.reportFilters.service_number = '';
     this.reportFilters.report_verified = '';
     this.reportFilters.beneficiary_type = '';
     this.reportFilters.contrast = '';
@@ -1255,6 +1279,10 @@ export class AppComponent implements OnDestroy {
         this.clearServiceSearch();
         this.busy = false;
         this.showReceptionModal = false;
+        if (this.view === 'reception-report') {
+          this.loadReceptionReport();
+          if (this.reportTab === 'summary') this.loadMonthlySummary();
+        }
         this.loadLookups();
         this.refresh();
       },
@@ -1894,7 +1922,7 @@ export class AppComponent implements OnDestroy {
     const url = new URL(window.location.href); url.searchParams.set('detail', detail); window.history.pushState({}, '', url); this.clientLogs.navigation();
     this.loadDashboardPatients(); window.scrollTo({ top: 0 });
   }
-  get dashboardDetailTitle(): string { return ({ all: 'All patients', verified: 'Reports verified', unverified: 'Reports pending verification', waiting: 'Waiting patients', called: 'Called patients', in_progress: 'Patients in service', completed: 'Completed patients', vip: 'VIP patients', wait: 'Average wait time per room' } as Record<string,string>)[this.dashboardDetail] || 'Patients'; }
+  get dashboardDetailTitle(): string { return ({ all: 'All patients', verified: 'Reported entries', unverified: 'Unreported entries', waiting: 'Waiting patients', called: 'Called patients', in_progress: 'Patients in service', completed: 'Completed patients', vip: 'VIP patients', wait: 'Average wait time per room' } as Record<string,string>)[this.dashboardDetail] || 'Patients'; }
   get dashboardRooms(): DashboardRoom[] {
     if (this.dashboard?.rooms?.length) {
       return this.dashboard.rooms;
@@ -1939,7 +1967,7 @@ export class AppComponent implements OnDestroy {
     this.api.claimPatient(this.selectedDoctorId, token.id).subscribe({ next: updated => { this.actionBusy = false; this.editor = ''; this.notify(`Patient assigned to room ${updated.room_number}`); this.refresh(); }, error: error => { this.actionBusy = false; this.message = this.apiErrorMessage(error, 'Patient is no longer available.'); this.refresh(); } });
   }
   exportTodayReport(): void {
-    this.reportFilters = { date_from: this.registrationDate, date_to: this.registrationDate, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '', report_verified: '' };
+    this.reportFilters = { date_from: this.registrationDate, date_to: this.registrationDate, doctor_id: '', waiting_room: '', status: '', priority: '', service_category: '', beneficiary_type: '', contrast: '', report_verified: '', service_number: '' };
     this.loadReceptionReport(); this.exportReceptionReportPdf();
   }
 

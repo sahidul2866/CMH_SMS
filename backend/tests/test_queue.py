@@ -1546,7 +1546,7 @@ def test_waiting_patient_edit_and_required_fields():
     assert client.put('/api/v1/registration-fields', json={'value': {'required': ['status']}}).status_code == 422
     assert client.put('/api/v1/settings/registration_fields', json={'value': {'required': []}}).status_code == 422
     client.post(f"/api/v1/doctors/dr-khan/tokens/{token['id']}/call").raise_for_status()
-    assert client.patch(f"/api/v1/tokens/{token['id']}", json=payload).status_code == 409
+    assert client.patch(f"/api/v1/tokens/{token['id']}", json=payload).status_code == 200
 
 
 def test_radiographer_management_and_role_logins():

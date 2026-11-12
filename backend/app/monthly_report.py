@@ -387,7 +387,7 @@ def export_summary(format: Literal['xlsx', 'pdf'], month: str | None = Query(def
     note = ('Registrations (including cancelled registrations)' if basis == 'registrations' else 'Completed MRIs by completion date (Asia/Dhaka)')
     if review:
         note += ' | Needs review: included in total, pending classification'
-    first = ['DATE', 'SERVING', '', '', '', '', 'RETD (MIL)', '', 'FAMILY', '', '', 'RE', 'CNE'] + (['NEEDS REVIEW'] if review else []) + ['TOTAL', 'VERIFIED', 'PENDING']
+    first = ['DATE', 'SERVING', '', '', '', '', 'RETD (MIL)', '', 'FAMILY', '', '', 'RE', 'CNE'] + (['NEEDS REVIEW'] if review else []) + ['TOTAL', 'REPORTED', 'UNREPORTED']
     second = [''] + [c[2] for c in COLUMNS[:10]] + ['', ''] + ([''] if review else []) + ['', '', '']
     data = [first, second]
     for row in report['rows']:

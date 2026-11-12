@@ -531,7 +531,7 @@ PERMISSION_CATALOG = [
     {"key": "pages.display", "label": "Open Waiting Display", "group": "Pages"},
     {"key": "pages.reports", "label": "Open Reports & Audit", "group": "Pages"},
     {"key": "pages.dashboard", "label": "Open Radiography Dashboard", "group": "Pages"},
-    {"key": "reports.verify", "label": "Verify entry reports", "group": "Reports"},
+    {"key": "reports.verify", "label": "Mark entries as reported", "group": "Reports"},
     {"key": "queue.supplies.update", "label": "Update film and contrast counts", "group": "Queue"},
     {"key": "queue.serial.create", "label": "Generate patient serials", "group": "Queue"},
     {"key": "queue.view", "label": "View permitted queue", "group": "Queue"},
@@ -1006,7 +1006,7 @@ def verify_report(token_id: str,
     if not token:
         raise HTTPException(404, "Entry not found")
     if token.status in ('cancelled', 'no_show'):
-        raise HTTPException(409, "Cannot verify a cancelled or absent entry")
+        raise HTTPException(409, "Cannot mark a cancelled or absent entry as reported")
     if not token.report_verified:
         token.report_verified = True
         token.report_verified_at = datetime.utcnow()
@@ -1025,8 +1025,6 @@ def update_token_supplies(token_id: str, payload: TokenSuppliesUpdate,
         raise HTTPException(404, "Patient not found")
     if user_access_profile(user, db) == 'radiographer' and (not user.doctor_id or token.doctor_id != user.doctor_id):
         raise HTTPException(403, "Only patients assigned to your room can be updated")
-    if token.status == 'completed' and user_access_profile(user, db) != 'admin':
-        raise HTTPException(403, "Only administrators can update film and contrast for completed patients")
     if token.status in ('cancelled', 'no_show'):
         raise HTTPException(409, "Cannot update a cancelled or absent patient")
     changes = payload.model_dump(exclude_unset=True)
@@ -1046,16 +1044,14 @@ def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depen
         raise HTTPException(404, "Patient not found")
     if user_access_profile(user, db) == "radiographer" and token.doctor_id and token.doctor_id != user.doctor_id:
         raise HTTPException(403, "Patient is assigned to another room")
-    if token.status != "waiting":
-        raise HTTPException(409, "Only waiting patients can be edited; refresh the queue")
     from .registration import validate_registration
     payload = validate_registration(db, payload, existing=token)
     service = QueueService(db)
-    for category, value in [("service_category", payload.service_category), ("priority_category", payload.priority), ("rank_relationship", payload.rank), ("patient_source", payload.patient_source)]:
+    for category, value in [("designation", payload.patient_title), ("service_category", payload.service_category), ("priority_category", payload.priority), ("rank_relationship", payload.rank), ("patient_source", payload.patient_source)]:
         if value:
             service._require_lookup(category, value)
     from .monthly_report import classify
-    fields = {"custom_fields", "patient_name_bn", "patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "ward_text", "beneficiary_type", "service_status", "entitlement", "family_relationship"}
+    fields = {"patient_title", "custom_fields", "patient_name_bn", "patient_name", "patient_phone", "service_category", "rank", "service_number", "priority", "age", "unit", "mri_area", "contrast", "film", "report", "patient_source", "ward_text", "beneficiary_type", "service_status", "entitlement", "family_relationship"}
     changes = {key: value for key, value in payload.model_dump().items() if key in fields}
     if "patient_name_bn" not in payload.model_fields_set:
         if payload.patient_name != token.patient_name:
@@ -1818,7 +1814,7 @@ def queue_report(_: User = Depends(require_permission("reports.view")), db: Sess
     return {
         "total": len(tokens),
         "by_status": grouped("status"),
-        "by_report_verification": {"Verified": sum(t.report_verified for t in tokens), "Pending": sum(not t.report_verified for t in tokens)},
+        "by_report_verification": {"Reported": sum(t.report_verified for t in tokens), "Unreported": sum(not t.report_verified for t in tokens)},
         "by_doctor": grouped("doctor_name"),
         "by_department": grouped("department"),
         "by_room": grouped("waiting_room"),
@@ -1847,6 +1843,7 @@ def reception_report_query(
     beneficiary_type: str | None = None,
     contrast: str | None = None,
     report_verified: bool | None = None,
+    service_number: str | None = None,
 ) -> list[QueueToken]:
     if date_from > date_to:
         raise HTTPException(422, "From date must not be after to date")
@@ -1862,6 +1859,8 @@ def reception_report_query(
     ):
         if value:
             statement = statement.where(field == value)
+    if service_number and service_number.strip():
+        statement = statement.where(func.lower(QueueToken.service_number).contains(service_number.strip().lower(), autoescape=True))
     if report_verified is not None:
         statement = statement.where(QueueToken.report_verified == report_verified)
     if beneficiary_type:
@@ -1893,12 +1892,13 @@ def reception_report_params(
     beneficiary_type: str | None = None,
     contrast: str | None = None,
     report_verified: bool | None = None,
+    service_number: str | None = Query(default=None, max_length=40),
 ) -> dict[str, object]:
     return {
         "date_from": date_from, "date_to": date_to, "doctor_id": doctor_id,
         "waiting_room": waiting_room, "status_filter": status,
         "priority": priority, "service_category": service_category,
-        "beneficiary_type": beneficiary_type, "contrast": contrast, "report_verified": report_verified,
+        "beneficiary_type": beneficiary_type, "contrast": contrast, "report_verified": report_verified, "service_number": service_number,
     }
 
 
@@ -1944,7 +1944,7 @@ def reception_report_excel(
         "MRI Area", "Contrast", "Film", "Report", "Patient Source", "Priority", "Room", "Radiographer", "Status",
         "Created At", "Called At", "Service Started At", "Completed At", "Cancelled At", "Skipped At",
         "Recalled At", "No Show At", "Scheduled At", "Recall Count", "Mobile Number", "Service Category",
-        "Department", "Waiting Room", "Registration Type", "Patient Type", "Entitlement", "Service Status", "Family Relationship", "Summary Category", "Report Verified", "Verified At", "Verified By",
+        "Department", "Waiting Room", "Registration Type", "Patient Type", "Entitlement", "Service Status", "Family Relationship", "Summary Category", "Report Status", "Reported At", "Reported By",
     ]
     from .registration import requirements
     custom = requirements(db)['custom']
@@ -1966,7 +1966,7 @@ def reception_report_excel(
             token.patient_phone, token.service_category, token.department, token.waiting_room, token.source,
             label("beneficiary_type", token.beneficiary_type), label("entitlement", token.entitlement), label("service_status", token.service_status),
             label("family_relationship", token.family_relationship), token.summary_category or "Needs review",
-            "Yes" if token.report_verified else "No", token.report_verified_at, token.report_verified_by or "",
+            "Reported" if token.report_verified else "Unreported", token.report_verified_at, token.report_verified_by or "",
         ] + [(token.custom_fields or {}).get(field['key'], '') for field in custom])
     sheet.freeze_panes = "F2"
     sheet.auto_filter.ref = sheet.dimensions
@@ -2034,7 +2034,7 @@ def reception_report_pdf(
     ]
     headers = [
         RECEPTION_ID_HEADER, "Date", "Service No./BA", RECEPTION_RANK_HEADER, "Type", "Name", "Age", "Unit",
-        "MRI area", "Contrast", "Film", "Report", "Patient source", "Priority / Room", "Report verified",
+        "MRI area", "Contrast", "Film", "Report", "Patient source", "Priority / Room", "Report status",
     ]
     rows = [headers]
     cell_style = styles["BodyText"].clone("RegisterCell")
@@ -2046,7 +2046,7 @@ def reception_report_pdf(
             label("rank_relationship", token.rank), token_type, token.patient_name, token.age, token.unit or "", token.mri_area or "",
             token.contrast, token.film, token.report or "", " · ".join(filter(None, [label("patient_source", token.patient_source), token.ward_text])),
             f"{label('priority_category', token.priority)} / {token.room_number}",
-            f"Yes · {token.report_verified_by}" if token.report_verified else "Pending"]
+            f"Reported · {token.report_verified_by}" if token.report_verified else "Unreported"]
         rows.append([Paragraph(escape(str(value)) if value is not None else "", cell_style) for value in values])
     table = LongTable(rows, repeatRows=1, splitInRow=1,
         colWidths=[18*mm, 17*mm, 20*mm, 22*mm, 14*mm, 26*mm, 9*mm, 18*mm, 24*mm, 12*mm, 9*mm, 34*mm, 18*mm, 20*mm, 18*mm])

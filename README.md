@@ -414,3 +414,5 @@ automatic recovery again and starts the updated server. A different application
 on port 8100, or a CMH task pointing at another folder, is left untouched and
 reported as an error. If setup fails, recovery stays paused; fix the reported
 error and rerun the same BAT file to finish the update.
+
+Reception Report includes an **Edit entry** action for users with `queue.serial.create`, opening the full registration form even for completed entries. Radiographers retain room restrictions. All configured patient and examination fields can be corrected, including film, contrast and report text. Status, serial, original registration date and system timestamps are preserved; changing report identity or contents clears verification. Saving refreshes the filtered report. The separate film/contrast-only action still uses `queue.supplies.update`.

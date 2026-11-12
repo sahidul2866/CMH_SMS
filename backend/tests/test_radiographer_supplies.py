@@ -37,10 +37,32 @@ def test_radiographer_registers_and_records_film_contrast_for_own_room():
     client.post(f"/api/v1/doctors/dr-khan/tokens/{own['id']}/action", json={'action': 'start'}).raise_for_status()
     client.post(f"/api/v1/doctors/dr-khan/tokens/{own['id']}/action", json={'action': 'complete'}).raise_for_status()
     completed_edit = client.patch(url, json={'film': 5, 'contrast': 2})
-    assert completed_edit.status_code == 403
-    assert completed_edit.json()['detail'] == 'Only administrators can update film and contrast for completed patients'
+    assert completed_edit.status_code == 200, completed_edit.text
+    assert completed_edit.json()['film'] == 5 and completed_edit.json()['contrast'] == 2
+    assert completed_edit.json()['status'] == 'completed'
+    assert completed_edit.json()['serial_number'] == own['serial_number']
     client.cookies.clear()
     client.post('/api/v1/auth/login', json={'username': 'admin', 'password': 'AdminPass123!'}).raise_for_status()
     admin_edit = client.patch(url, json={'film': 5, 'contrast': 2})
     assert admin_edit.status_code == 200
     assert admin_edit.json()['film'] == 5 and admin_edit.json()['contrast'] == 2
+
+
+def test_completed_entry_counts_are_updated_in_filtered_reception_report_and_audited():
+    from datetime import date
+    from sqlalchemy import select
+    from app.models import AuditEvent
+    entry = client.post('/api/v1/tokens', json=token_payload()).json()
+    client.post(f"/api/v1/doctors/dr-khan/tokens/{entry['id']}/action", json={'action': 'complete_without_call'}).raise_for_status()
+    client.patch(f"/api/v1/tokens/{entry['id']}/report-verification", json={}).raise_for_status()
+    updated = client.patch(f"/api/v1/tokens/{entry['id']}/supplies", json={'film': 4, 'contrast': 2})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['status'] == 'completed'
+    assert updated.json()['serial_number'] == entry['serial_number']
+    assert updated.json()['report_verified'] is True
+    rows = client.get('/api/v1/reports/reception', params={'date_from': str(date.today()), 'date_to': str(date.today()), 'status': 'completed', 'contrast': 'used'}).json()
+    assert len(rows) == 1 and rows[0]['film'] == 4 and rows[0]['contrast'] == 2
+    with SessionLocal() as db:
+        audit = db.scalar(select(AuditEvent).where(AuditEvent.action == 'token.supplies_updated', AuditEvent.token_id == entry['id']))
+        assert audit.actor == 'admin'
+        assert audit.detail['changes'] == {'film': 4, 'contrast': 2}
