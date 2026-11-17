@@ -58,6 +58,8 @@ from .auth import (
     hash_password,
     new_session,
     require_permission,
+    require_reception_report,
+    require_report_verification,
     revoke_session,
     user_for_session,
     verify_password,
@@ -981,6 +983,23 @@ async def make_radiographer_available(doctor_id: str, payload: MakeAvailableRequ
     return {"released": len(active)}
 
 
+@app.get("/api/v1/registration/patient-search", response_model=list[TokenRead])
+def reception_patient_search(q: str = Query(min_length=1, max_length=160),
+                             offset: int = Query(default=0, ge=0),
+                             _user: User = Depends(require_permission("pages.reception")),
+                             db: Session = Depends(get_db)):
+    query = q.strip().lower()
+    if not query:
+        return []
+    statement = select(QueueToken).where(or_(
+        *(func.lower(field).contains(query, autoescape=True) for field in
+          (QueueToken.patient_name, QueueToken.patient_name_bn, QueueToken.service_number,
+           QueueToken.serial_number, QueueToken.token_number))
+    )).order_by(QueueToken.token_date.desc(), QueueToken.sequence.asc(), QueueToken.id).offset(offset).limit(100)
+    service = QueueService(db)
+    return [service._read(token) for token in db.scalars(statement)]
+
+
 @app.get("/api/v1/registration/service-number-suggestions")
 def service_number_suggestions(q: str = Query(min_length=2, max_length=40), offset: int = Query(default=0, ge=0),
                                _user: User = Depends(require_permission("queue.serial.create")), db: Session = Depends(get_db)):
@@ -1001,12 +1020,10 @@ def service_number_suggestions(q: str = Query(min_length=2, max_length=40), offs
 
 @app.patch("/api/v1/tokens/{token_id}/report-verification", response_model=TokenRead)
 def verify_report(token_id: str,
-                  user: User = Depends(require_permission("reports.verify")), db: Session = Depends(get_db)):
+                  user: User = Depends(require_report_verification), db: Session = Depends(get_db)):
     token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
     if not token:
         raise HTTPException(404, "Entry not found")
-    if token.status in ('cancelled', 'no_show'):
-        raise HTTPException(409, "Cannot mark a cancelled or absent entry as reported")
     if not token.report_verified:
         token.report_verified = True
         token.report_verified_at = datetime.utcnow()
@@ -1860,7 +1877,13 @@ def reception_report_query(
         if value:
             statement = statement.where(field == value)
     if service_number and service_number.strip():
-        statement = statement.where(func.lower(QueueToken.service_number).contains(service_number.strip().lower(), autoescape=True))
+        search = service_number.strip().lower()
+        statement = statement.where(or_(
+            func.lower(QueueToken.service_number).contains(search, autoescape=True),
+            func.lower(QueueToken.patient_name).contains(search, autoescape=True),
+            func.lower(QueueToken.serial_number).contains(search, autoescape=True),
+            func.lower(QueueToken.token_number).contains(search, autoescape=True),
+        ))
     if report_verified is not None:
         statement = statement.where(QueueToken.report_verified == report_verified)
     if beneficiary_type:
@@ -1878,7 +1901,13 @@ def reception_report_query(
             statement = statement.where(QueueToken.contrast.is_not(None), QueueToken.contrast > 0)
         elif normalized in {"none", "no", "false", "0"}:
             statement = statement.where(or_(QueueToken.contrast.is_(None), QueueToken.contrast <= 0))
-    return list(db.scalars(statement.order_by(QueueToken.token_date.desc(), QueueToken.created_at.desc(), QueueToken.sequence.desc())))
+    tokens = list(db.scalars(statement))
+    def serial_order(token: QueueToken):
+        serial = re.fullmatch(r"(\d+)/(\d+)", token.serial_number or "")
+        return (int(serial[2]) if serial else token.token_date.year % 100,
+                int(serial[1]) if serial else token.sequence,
+                token.token_date, token.created_at, token.id)
+    return sorted(tokens, key=serial_order)
 
 
 def reception_report_params(
@@ -1892,7 +1921,7 @@ def reception_report_params(
     beneficiary_type: str | None = None,
     contrast: str | None = None,
     report_verified: bool | None = None,
-    service_number: str | None = Query(default=None, max_length=40),
+    service_number: str | None = Query(default=None, max_length=160),
 ) -> dict[str, object]:
     return {
         "date_from": date_from, "date_to": date_to, "doctor_id": doctor_id,
@@ -1920,7 +1949,7 @@ def verification_summary(priority_scope: Literal["all", "vip", "non_vip"] = "all
 @app.get("/api/v1/reports/reception")
 def reception_report(
     filters: dict[str, object] = Depends(reception_report_params),
-    _: User = Depends(require_permission("reports.view")),
+    _: User = Depends(require_reception_report),
     db: Session = Depends(get_db),
 ):
     return reception_report_query(db, **filters)
@@ -1929,7 +1958,7 @@ def reception_report(
 @app.get("/api/v1/reports/reception.xlsx")
 def reception_report_excel(
     filters: dict[str, object] = Depends(reception_report_params),
-    _: User = Depends(require_permission("reports.view")),
+    _: User = Depends(require_reception_report),
     db: Session = Depends(get_db),
 ):
     tokens = reception_report_query(db, **filters)
@@ -1994,7 +2023,7 @@ def reception_report_excel(
 @app.get("/api/v1/reports/reception.pdf")
 def reception_report_pdf(
     filters: dict[str, object] = Depends(reception_report_params),
-    _: User = Depends(require_permission("reports.view")),
+    _: User = Depends(require_reception_report),
     db: Session = Depends(get_db),
 ):
     tokens = reception_report_query(db, **filters)

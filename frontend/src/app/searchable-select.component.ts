@@ -11,7 +11,7 @@ import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
   template: `
     <div class="control">
       <input type="text" role="combobox" autocomplete="off" [value]="text" [disabled]="disabled"
-        [attr.maxlength]="allowCustom ? 100 : null" [placeholder]="placeholder" [attr.aria-label]="label" [attr.aria-required]="required"
+        [attr.maxlength]="allowCustom ? maxLength : null" [placeholder]="placeholder" [attr.aria-label]="label" [attr.aria-required]="required"
         [attr.aria-expanded]="open && (!searchOnly || !!query.trim())" [attr.aria-controls]="listId" aria-autocomplete="list"
         [attr.aria-activedescendant]="open && filtered.length ? listId + '-' + active : null"
         (focus)="show()" (click)="show()" (input)="search($any($event.target).value)"
@@ -22,9 +22,9 @@ import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
       <li *ngFor="let option of filtered; let index = index" role="option" [id]="listId + '-' + index"
         [attr.aria-selected]="value === option.value" [class.active]="active === index"
         (mousedown)="$event.preventDefault()" (click)="choose(option)" (mouseenter)="active = index">{{ option.label }}</li>
-      <li *ngIf="!filtered.length" class="empty" role="presentation">{{ allowCustom ? 'Use typed rank: ' + text.trim() : 'No matching options' }}</li>
+      <li *ngIf="!filtered.length" class="empty" role="presentation">{{ allowCustom ? 'Use typed value: ' + text.trim() : 'No matching options' }}</li>
     </ul>`,
-  styles: [`:host{display:block;position:relative;min-width:0;font-weight:400}.control{position:relative}input{width:100%;height:auto;min-height:38px;min-width:0;box-sizing:border-box;border:1px solid #ccd9d0;border-radius:6px;background:#fff;padding:8px 30px 8px 10px;color:#233e2e;font:var(--patient-form-font-size, 13px) Arial,sans-serif}input:focus-visible{outline:3px solid #4b8a6e;outline-offset:2px}.chevron{position:absolute;right:11px;top:9px;pointer-events:none;color:#607568}.options{position:absolute;z-index:1200;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;padding:4px;margin:5px 0 0;list-style:none;border:1px solid #a6beb0;border-radius:7px;background:white;box-shadow:0 7px 22px #123c3126;color:#233e2e;font:var(--patient-form-font-size, 13px) Arial,sans-serif}.options li{padding:10px;border-radius:4px;cursor:pointer}.options li.active{background:#e1efe7}.options li[aria-selected=true]{font-weight:700}.options .empty{color:#607568;cursor:default}`],
+  styles: [`:host{display:block;position:relative;min-width:0;font-weight:400}.control{position:relative}input{width:100%;height:auto;min-height:34px;min-width:0;box-sizing:border-box;border:1px solid #ccd9d0;border-radius:6px;background:#fff;padding:4px 30px 4px 8px;color:#233e2e;font:var(--patient-form-font-size, 13px) Arial,sans-serif}input:focus-visible{outline:3px solid #4b8a6e;outline-offset:2px}.chevron{position:absolute;right:11px;top:9px;pointer-events:none;color:#607568}.options{position:absolute;z-index:1200;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;padding:4px;margin:5px 0 0;list-style:none;border:1px solid #a6beb0;border-radius:7px;background:white;box-shadow:0 7px 22px #123c3126;color:#233e2e;font:var(--patient-form-font-size, 13px) Arial,sans-serif}.options li{padding:10px;border-radius:4px;cursor:pointer}.options li.active{background:#e1efe7}.options li[aria-selected=true]{font-weight:700}.options .empty{color:#607568;cursor:default}`],
 })
 export class SearchableSelectComponent implements ControlValueAccessor {
   private static sequence = 0;
@@ -35,6 +35,7 @@ export class SearchableSelectComponent implements ControlValueAccessor {
   @Input() required = false;
   @Input() searchOnly = false;
   @Input() allowCustom = false;
+  @Input() maxLength = 100;
   private choices: {value: string; label: string}[] = [];
   @Input() set options(options: {value: string; label: string}[]) {
     this.choices = options || [];

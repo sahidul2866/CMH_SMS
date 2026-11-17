@@ -6,7 +6,7 @@ import re
 from fastapi import HTTPException
 from .models import AppSetting
 
-FORM_DEFAULTS = {'layout': 'modal', 'font_size': 18}
+FORM_DEFAULTS = {'layout': 'modal', 'font_size': 20}
 
 FIELDS = {
     'patient_name': 'Name', 'patient_phone': 'Contact number', 'patient_source': 'Patient source',

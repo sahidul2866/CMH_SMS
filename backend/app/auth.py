@@ -131,3 +131,15 @@ def require_permission(permission: str):
 def websocket_user(websocket: WebSocket, db: Session) -> User | None:
     user = user_for_session(db, websocket.cookies.get(SESSION_COOKIE))
     return user if user and not user.must_change_password else None
+
+
+def require_reception_report(user: User = Depends(current_user), db: Session = Depends(get_db)) -> User:
+    if not (has_permission(user, db, "reports.view") or has_permission(user, db, "pages.reception")):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+    return user
+
+
+def require_report_verification(user: User = Depends(current_user), db: Session = Depends(get_db)) -> User:
+    if not (has_permission(user, db, "reports.verify") or has_permission(user, db, "pages.reception")):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+    return user

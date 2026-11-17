@@ -85,9 +85,34 @@ export class AppComponent implements OnDestroy {
   get dashboardPeriodLabel(): string {
     return this.dashboardFrom === TODAY_LOCAL && this.dashboardTo === TODAY_LOCAL ? 'Today' : `${this.dashboardFrom} – ${this.dashboardTo}`;
   }
+  receptionSearch = '';
+  receptionSearchRows: QueueToken[] = [];
+  receptionSearchLoading = false;
+  receptionSearchMore = false;
+  receptionSearchError = '';
+  private receptionSearchTimer?: ReturnType<typeof setTimeout>;
+  private receptionSearchRequest?: Subscription;
+  get receptionPatients(): QueueToken[] { return this.receptionSearch.trim() ? this.receptionSearchRows : this.waiting; }
+  searchReception(more = false): void {
+    clearTimeout(this.receptionSearchTimer);
+    this.receptionSearchRequest?.unsubscribe();
+    this.receptionSearchError = '';
+    if (!more) { this.receptionSearchRows = []; this.receptionSearchMore = false; }
+    const query = this.receptionSearch.trim();
+    this.receptionSearchLoading = !!query;
+    if (!query) return;
+    this.receptionSearchTimer = setTimeout(() => {
+      this.receptionSearchRequest = this.api.searchReceptionPatients(query, more ? this.receptionSearchRows.length : 0).subscribe({
+        next: rows => { this.receptionSearchRows = more ? [...this.receptionSearchRows, ...rows] : rows; this.receptionSearchMore = rows.length === 100; this.receptionSearchLoading = false; },
+        error: () => { this.receptionSearchLoading = false; this.receptionSearchError = 'Could not search patients. Please try again.'; },
+      });
+    }, 300);
+  }
+  textLookup(category: string): {value: string; label: string}[] {
+    return this.lookup(category).map(item => ({value: item.label, label: item.label}));
+  }
   canVerifyReport(token: QueueToken): boolean {
-    return this.hasPermission('reports.verify') && !token.report_verified
-      && !['cancelled', 'no_show'].includes(token.status);
+    return (this.hasPermission('reports.verify') || this.hasPermission('pages.reception')) && !token.report_verified;
   }
   openRowActions(id: string, event: MouseEvent): void {
     const menu = document.getElementById(id);
@@ -101,6 +126,7 @@ export class AppComponent implements OnDestroy {
     menu.style.top = `${Math.max(8, rect.bottom + height + 8 < window.innerHeight ? rect.bottom + 6 : rect.top - height - 6)}px`;
   }
   openVerification(token: QueueToken): void {
+    if (!this.canVerifyReport(token)) return;
     this.patientDetail = null; this.savedEntry = null;
     this.verificationTarget = token; this.verificationError = '';
   }
@@ -112,6 +138,9 @@ export class AppComponent implements OnDestroy {
         this.verificationBusy = false; this.verificationTarget = null;
         if (this.patientDetail?.id === token.id) this.patientDetail = token;
         this.receptionReportRows = this.receptionReportRows.map(row => row.id === token.id ? {...row, ...token} : row);
+        this.receptionSearchRows = this.receptionSearchRows.map(row => row.id === token.id ? token : row);
+        this.dashboardPatients = this.dashboardPatients.map(row => row.id === token.id ? token : row);
+        if (this.summaryPatients) this.summaryPatients = this.summaryPatients.map(row => row.id === token.id ? token : row);
         this.notify('Entry marked as reported'); this.refresh();
       },
       error: error => { this.verificationBusy = false; this.verificationError = this.apiErrorMessage(error, 'Could not mark entry as reported.'); }
@@ -381,7 +410,7 @@ export class AppComponent implements OnDestroy {
   }
   requiredFields = ['patient_name', 'rank', 'service_number', 'beneficiary_type', 'patient_source', 'family_relationship', 'mri_area'];
   enabledFields: string[] = [];
-  patientFormAppearance = {layout: 'modal', font_size: 18};
+  patientFormAppearance = {layout: 'modal', font_size: 20};
   registrationFieldsLoaded = false;
   registrationFields: Record<string, string> = {};
   requiredDraft: Record<string, boolean> = {};
@@ -393,7 +422,7 @@ export class AppComponent implements OnDestroy {
   newCustomType: CustomRegistrationField['type'] = 'text';
   newCustomOptions = '';
   private applyRegistrationFields(data: RegistrationFields): void {
-    this.patientFormAppearance = data.appearance ?? {layout: 'modal', font_size: 18};
+    this.patientFormAppearance = data.appearance ?? {layout: 'modal', font_size: 20};
     this.requiredFields = [...new Set([...data.required, 'mri_area'])]; this.enabledFields = [...new Set([...(data.enabled ?? Object.keys(data.fields)), 'mri_area'])];
     this.registrationFields = data.fields; this.customFields = data.custom ?? [];
     this.customDraft = JSON.parse(JSON.stringify(this.customFields));
@@ -610,7 +639,7 @@ export class AppComponent implements OnDestroy {
 
   printToken: QueueToken | null = null;
   lookupOptions: LookupOption[] = [];
-  lookupCategories = ['department', 'room_number', 'sex', 'service_category', 'rank_relationship', 'priority_category', 'patient_source', 'beneficiary_type', 'service_status', 'entitlement', 'family_relationship'];
+  lookupCategories = ['department', 'room_number', 'sex', 'service_category', 'rank_relationship', 'priority_category', 'patient_source', 'beneficiary_type', 'service_status', 'entitlement', 'family_relationship', 'mri_area', 'ward_text', 'unit'];
   selectedLookupCategory = 'patient_source';
   newLookup = { category: 'patient_source', value: '', label: '', sort_order: 0 };
   holidays: Holiday[] = [];
@@ -722,6 +751,8 @@ export class AppComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    clearTimeout(this.receptionSearchTimer);
+    this.receptionSearchRequest?.unsubscribe();
     clearTimeout(this.reportServiceSearchTimer);
     this.reportSearchRequest?.unsubscribe();
     this.audioDiagnosticSubscription?.unsubscribe();
@@ -774,7 +805,7 @@ export class AppComponent implements OnDestroy {
     if (view === 'appointments') return false;
     if (view === 'doctor') return this.hasPermission('pages.radiographer');
     if (view === 'reports') return this.hasPermission('pages.reports');
-    if (view === 'reception-report') return this.hasPermission('pages.reports');
+    if (view === 'reception-report') return this.hasPermission('pages.reports') || this.hasPermission('pages.reception');
     if (view === 'display') return this.hasPermission('pages.display');
     return false;
   }
@@ -1391,7 +1422,7 @@ export class AppComponent implements OnDestroy {
     });
   }
   lookupCategoryLabel(category: string): string {
-    return ({ rank_relationship: 'Rank', patient_source: 'Patient source (OPD / Ward)', room_number: 'Room numbers', priority_category: 'Patient priority' } as Record<string,string>)[category] || category.replaceAll('_', ' ');
+    return ({ mri_area: 'Part of MRI', ward_text: 'Ward details', unit: 'Unit', rank_relationship: 'Rank', patient_source: 'Patient source (OPD / Ward)', room_number: 'Room numbers', priority_category: 'Patient priority' } as Record<string,string>)[category] || category.replaceAll('_', ' ');
   }
 
   callNext(): void {

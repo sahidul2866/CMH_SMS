@@ -16,7 +16,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import require_permission
+from .auth import require_permission, require_reception_report
 from .database import get_db
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -311,12 +311,12 @@ def summary(db, month, basis, date_from=None, date_to=None):
 
 
 @router.get('/reports/mri-summary')
-def get_summary(month: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}$'), date_from: date | None = None, date_to: date | None = None, basis: Literal['registrations', 'completed'] = 'registrations', db: Session = Depends(get_db), _user: User = Depends(require_permission('reports.view'))):
+def get_summary(month: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}$'), date_from: date | None = None, date_to: date | None = None, basis: Literal['registrations', 'completed'] = 'registrations', db: Session = Depends(get_db), _user: User = Depends(require_reception_report)):
     return summary(db, month, basis, date_from, date_to)
 
 
 @router.get('/reports/mri-summary/patients', response_model=list[TokenRead])
-def summary_patients(month: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}$'), date_from: date | None = None, date_to: date | None = None, basis: Literal['registrations', 'completed'] = 'registrations', day: date | None = None, category: str | None = None, db: Session = Depends(get_db), _user: User = Depends(require_permission('reports.view'))):
+def summary_patients(month: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}$'), date_from: date | None = None, date_to: date | None = None, basis: Literal['registrations', 'completed'] = 'registrations', day: date | None = None, category: str | None = None, db: Session = Depends(get_db), _user: User = Depends(require_reception_report)):
     _, _, records = month_rows(db, month, basis, date_from, date_to)
     keys = {c[0] for c in COLUMNS}
     return [token for token in records if (not day or record_day(token, basis) == day) and (not category or (token.summary_category if token.summary_category in keys else 'unclassified') == category)]
@@ -376,7 +376,7 @@ def correct_classification(token_id: str, payload: ClassificationCorrection, db:
 
 
 @router.get('/reports/mri-summary.{format}')
-def export_summary(format: Literal['xlsx', 'pdf'], month: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}$'), date_from: date | None = None, date_to: date | None = None, basis: Literal['registrations', 'completed'] = 'registrations', db: Session = Depends(get_db), _user: User = Depends(require_permission('reports.view'))):
+def export_summary(format: Literal['xlsx', 'pdf'], month: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}$'), date_from: date | None = None, date_to: date | None = None, basis: Literal['registrations', 'completed'] = 'registrations', db: Session = Depends(get_db), _user: User = Depends(require_reception_report)):
     report = summary(db, month, basis, date_from, date_to)
     keys = [c[0] for c in COLUMNS]
     review = report['totals']['unclassified'] > 0

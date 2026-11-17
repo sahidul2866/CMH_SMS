@@ -67,6 +67,9 @@ export class QueueApiService {
   makeAvailable(doctorId: string, activeTokenIds: string[]) {
     return this.http.post<{released: number}>(`${this.baseUrl}/doctors/${doctorId}/make-available`, {active_token_ids: activeTokenIds});
   }
+  searchReceptionPatients(q: string, offset = 0) {
+    return this.http.get<QueueToken[]>(`${this.baseUrl}/registration/patient-search`, {params: {q, offset}});
+  }
   serviceNumberSuggestions(q: string, offset = 0) {
     return this.http.get<{items: ServiceNumberSuggestion[]; has_more: boolean}>(`${this.baseUrl}/registration/service-number-suggestions`, {params: {q, offset}});
   }

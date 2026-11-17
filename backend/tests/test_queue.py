@@ -1577,7 +1577,7 @@ def test_radiographer_management_and_role_logins():
         assert client.post('/api/v1/admin/doctors', json={**new_doctor, 'id': 'unauthorized'}).status_code == 403
         assert client.delete('/api/v1/admin/doctors/second-radio').status_code == 403
         assert client.put('/api/v1/registration-fields', json={'value': {'required': ['patient_name']}}).status_code == 403
-        can_view_reports = role in ['radiographer', 'head_of_dept', 'auditor']
+        can_view_reports = role in ['radiographer', 'head_of_dept', 'reception', 'auditor']
         assert client.get('/api/v1/reports/mri-summary', params={'date_from': date.today().isoformat(), 'date_to': date.today().isoformat()}).status_code == (200 if can_view_reports else 403)
         assert client.get('/api/v1/reports/reception').status_code == (200 if can_view_reports else 403)
         assert client.get('/api/v1/reports/reception.xlsx').status_code == (200 if can_view_reports else 403)
@@ -2278,3 +2278,33 @@ def test_audio_diagnostic_reports_disabled_and_zero_volume_and_requires_permissi
     client.cookies.clear()
     assert client.post('/api/v1/settings/announcement/diagnose', json={'value': {}}).status_code == 401
     assert client.get(f"/api/v1/settings/announcement/tests/{record['test_id']}").status_code == 401
+
+
+def test_reception_report_serial_order_search_and_reception_access():
+    from app.database import SessionLocal
+
+    first = client.post('/api/v1/tokens', json=token_payload('Alpha Patient')).json()
+    second_payload = token_payload('Bravo Patient')
+    second_payload['service_number'] = 'BA-OTHER-002'
+    second = client.post('/api/v1/tokens', json=second_payload).json()
+    with SessionLocal() as db:
+        db.get(QueueToken, first['id']).serial_number = '00010/26'
+        db.get(QueueToken, second['id']).serial_number = '00002/26'
+        db.add(User(username='reception-test', full_name='Reception',
+                    password_hash=hash_password('ReceptionPass123!'), role='reception', is_active=True))
+        db.commit()
+    client.cookies.clear()
+    client.post('/api/v1/auth/login', json={
+        'username': 'reception-test', 'password': 'ReceptionPass123!',
+    }).raise_for_status()
+    params = {'date_from': date.today().isoformat(), 'date_to': date.today().isoformat()}
+    response = client.get('/api/v1/reports/reception', params=params)
+    assert response.status_code == 200
+    assert [row['id'] for row in response.json()] == [second['id'], first['id']]
+    for query, expected in [('alpha', first['id']), ('OTHER', second['id']), ('00002/26', second['id'])]:
+        response = client.get('/api/v1/reports/reception', params={**params, 'service_number': query})
+        assert response.status_code == 200
+        assert [row['id'] for row in response.json()] == [expected]
+    for extension in ['xlsx', 'pdf']:
+        assert client.get(f'/api/v1/reports/reception.{extension}', params=params).status_code == 200
+    assert client.get('/api/v1/audit').status_code == 403
