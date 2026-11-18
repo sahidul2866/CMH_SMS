@@ -278,6 +278,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 @media(max-height:500px){.saved-success-banner{padding:4px 10px;margin-bottom:5px}.saved-success-banner p{display:none}.saved-check{width:26px;height:26px;font-size:22px}.saved-summary>header{padding:3px 10px}.saved-summary header b{font-size:30px}.saved-summary-grid>div{padding:3px 8px}.saved-summary-grid dt{font-size:12px}.saved-summary-grid dd{font-size:13px}.saved-information{margin:5px 0;padding:3px 8px}.saved-actions{margin-top:5px}.saved-actions button{min-height:30px;padding:3px 8px;font-size:13px}}
 
 .saved-id-banner{justify-content:center;flex-wrap:wrap;gap:8px 24px;text-align:center;padding:10px 16px}
-.saved-id-banner>span{font-size:20px;font-weight:700}
+.saved-id-banner>span{font-size:clamp(30px,4.5vw,48px);font-weight:800;line-height:1.05}
 .saved-id-banner>strong{font-size:clamp(40px,7vw,76px);line-height:1.05;letter-spacing:.02em;overflow-wrap:anywhere;min-width:0}
-@media(max-height:500px){.saved-id-banner{padding:5px 12px;gap:6px 16px}.saved-id-banner>span{font-size:16px}.saved-id-banner>strong{font-size:clamp(36px,6vw,56px)}}
+@media(max-height:500px){.saved-id-banner{padding:5px 12px;gap:6px 16px}.saved-id-banner>span{font-size:clamp(26px,4vw,38px)}.saved-id-banner>strong{font-size:clamp(36px,6vw,56px)}}
