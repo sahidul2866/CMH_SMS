@@ -261,3 +261,23 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
 .detail-report-entry{display:flex;align-items:center;gap:12px;border-top:1px solid var(--line);padding-right:12px}.detail-report-entry>.detail-row{flex:1;min-width:0;border-top:0}.detail-report-entry>.report-verify-button{flex-shrink:0}.report-verify-button:disabled{opacity:.65;cursor:default}.saved-report-action{display:flex;justify-content:flex-end;margin-top:16px}.saved-report-action button{font-size:20px;padding:10px 20px}.summary-patient-row{grid-template-columns:100px minmax(160px,1fr) minmax(160px,1fr) auto auto}
 @media(max-width:800px){.detail-report-entry{flex-wrap:wrap;padding:8px}.detail-report-entry>.detail-row{flex-basis:100%}.summary-patient-row{grid-template-columns:1fr 1fr}}
+
+/* Keep the saved-entry confirmation compact; the ID remains prominent. */
+.saved-confirmation{font-size:15px}
+.saved-success-banner{gap:12px;padding:9px 14px;margin-bottom:10px;border-radius:9px}
+.saved-check{width:36px;height:36px;font-size:28px}
+.saved-success-banner strong{font-size:16px}.saved-success-banner p{font-size:14px;margin:3px 0 0}
+.saved-summary{border-radius:9px}.saved-summary>header{flex-direction:row;align-items:center;padding:7px 12px;gap:12px}
+.saved-summary h3{font-size:17px}.saved-summary header>span{font-size:14px;padding:4px 12px;border-radius:7px}.saved-summary header b{font-size:36px;font-weight:800}
+.saved-summary-grid{grid-template-columns:1fr 1fr}.saved-summary-grid>div{grid-template-columns:minmax(100px,.65fr) minmax(0,1fr);padding:7px 12px;gap:8px}
+.saved-summary-grid dt{font-size:14px}.saved-summary-grid dd{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.saved-information{font-size:13px;padding:6px 10px;gap:8px;border-radius:7px;margin:9px 0}.saved-information span{font-size:21px}
+.saved-actions{grid-template-columns:1fr 1fr 1.5fr .8fr;gap:8px;margin-top:10px}
+.saved-actions button{min-height:38px;padding:6px 10px;font-size:15px;border-radius:7px;gap:6px}.saved-actions button span{font-size:22px}
+@media(max-width:600px){.saved-summary h3{font-size:14px}.saved-summary header>span{padding:3px 7px}.saved-summary header b{font-size:30px}.saved-summary-grid>div{grid-template-columns:1fr;gap:2px;padding:5px 8px}.saved-summary-grid dt{font-size:12px}.saved-summary-grid dd{font-size:14px}.saved-actions{grid-template-columns:1fr 1fr}.saved-success-banner strong{font-size:14px}.saved-success-banner p{font-size:12px}.saved-information{font-size:12px}}
+@media(max-height:500px){.saved-success-banner{padding:4px 10px;margin-bottom:5px}.saved-success-banner p{display:none}.saved-check{width:26px;height:26px;font-size:22px}.saved-summary>header{padding:3px 10px}.saved-summary header b{font-size:30px}.saved-summary-grid>div{padding:3px 8px}.saved-summary-grid dt{font-size:12px}.saved-summary-grid dd{font-size:13px}.saved-information{margin:5px 0;padding:3px 8px}.saved-actions{margin-top:5px}.saved-actions button{min-height:30px;padding:3px 8px;font-size:13px}}
+
+.saved-id-banner{justify-content:center;flex-wrap:wrap;gap:8px 24px;text-align:center;padding:10px 16px}
+.saved-id-banner>span{font-size:20px;font-weight:700}
+.saved-id-banner>strong{font-size:clamp(40px,7vw,76px);line-height:1.05;letter-spacing:.02em;overflow-wrap:anywhere;min-width:0}
+@media(max-height:500px){.saved-id-banner{padding:5px 12px;gap:6px 16px}.saved-id-banner>span{font-size:16px}.saved-id-banner>strong{font-size:clamp(36px,6vw,56px)}}

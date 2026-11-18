@@ -137,9 +137,3 @@ def require_reception_report(user: User = Depends(current_user), db: Session = D
     if not (has_permission(user, db, "reports.view") or has_permission(user, db, "pages.reception")):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
     return user
-
-
-def require_report_verification(user: User = Depends(current_user), db: Session = Depends(get_db)) -> User:
-    if not (has_permission(user, db, "reports.verify") or has_permission(user, db, "pages.reception")):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
-    return user

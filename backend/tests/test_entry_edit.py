@@ -34,7 +34,7 @@ def test_full_completed_entry_edit_preserves_identity_status_and_history():
     assert rows[0]['patient_name'] == 'Corrected Patient'
 
 
-def test_radiographer_can_edit_completed_own_entry_but_not_other_room():
+def test_radiographer_can_edit_completed_entry_without_room_restriction():
     entry = client.post('/api/v1/tokens', json=token_payload()).json()
     with SessionLocal() as db:
         db.get(QueueToken, entry['id']).status = 'completed'
@@ -49,4 +49,24 @@ def test_radiographer_can_edit_completed_own_entry_but_not_other_room():
     with SessionLocal() as db:
         db.scalar(select(User).where(User.username == 'rad')).doctor_id = None
         db.commit()
-    assert client.patch(f"/api/v1/tokens/{entry['id']}", json=token_payload()).status_code == 403
+    assert client.patch(f"/api/v1/tokens/{entry['id']}", json=token_payload()).status_code == 200
+
+
+def test_edit_and_verification_work_for_role_with_no_permissions_but_require_login():
+    entry = client.post('/api/v1/tokens', json=token_payload()).json()
+    with SessionLocal() as db:
+        db.add(RoleDefinition(name='limited', display_name='Limited', access_profile='auditor', permissions=[]))
+        db.add(User(username='limited', full_name='Limited', role='limited', password_hash=hash_password('LimitedPass123!')))
+        db.commit()
+    client.cookies.clear()
+    client.post('/api/v1/auth/login', json={'username': 'limited', 'password': 'LimitedPass123!'}).raise_for_status()
+    for endpoint in ['/api/v1/registration-fields', '/api/v1/lookups']:
+        assert client.get(endpoint).status_code == 200
+    edited = client.patch(f"/api/v1/tokens/{entry['id']}", json={**token_payload(), 'patient_name': 'Corrected by limited user'})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()['patient_name'] == 'Corrected by limited user'
+    endpoint = f"/api/v1/tokens/{entry['id']}/report-verification"
+    assert client.patch(endpoint).status_code == 200
+    client.cookies.clear()
+    assert client.patch(endpoint).status_code == 401
+    assert client.patch(f"/api/v1/tokens/{entry['id']}", json=token_payload()).status_code == 401

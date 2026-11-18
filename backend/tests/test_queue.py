@@ -1586,7 +1586,7 @@ def test_radiographer_management_and_role_logins():
             waiting = client.post('/api/v1/tokens', json=token_payload()).json()
             assert client.patch(f"/api/v1/tokens/{waiting['id']}", json=token_payload('Reception correction')).status_code == 200
         if role != 'reception':
-            assert client.patch(f"/api/v1/tokens/{token['id']}", json=token_payload()).status_code == 403
+            assert client.patch(f"/api/v1/tokens/{token['id']}", json=token_payload()).status_code == 200
         if role == 'radiographer':
             assert client.post('/api/v1/doctors/dr-khan/call-next').status_code == 403
     client.cookies.clear()
@@ -1905,7 +1905,7 @@ def test_stale_unassigned_transfer_cannot_overwrite_new_assignment():
         assert error.value.status_code == 403
 
 
-def test_bengali_name_suggestion_requires_registration_permission():
+def test_bengali_name_suggestion_requires_login_for_entry_editing():
     response = client.post('/api/v1/bengali-name-suggestion', json={'patient_name': 'Md. Rahim Uddin'})
     assert response.status_code == 200
     assert response.json() == {'patient_name_bn': 'মোহাম্মদ রহিম উদ্দিন', 'needs_review': True}
@@ -1916,7 +1916,7 @@ def test_bengali_name_suggestion_requires_registration_permission():
     client.cookies.clear()
     assert client.post('/api/v1/bengali-name-suggestion', json={'patient_name': 'Rahim'}).status_code == 401
     client.post('/api/v1/auth/login', json={'username': 'bn-auditor', 'password': 'Password123!'}).raise_for_status()
-    assert client.post('/api/v1/bengali-name-suggestion', json={'patient_name': 'Rahim'}).status_code == 403
+    assert client.post('/api/v1/bengali-name-suggestion', json={'patient_name': 'Rahim'}).status_code == 200
 
 
 def test_bengali_name_saved_corrected_preserved_and_hidden_on_private_display():

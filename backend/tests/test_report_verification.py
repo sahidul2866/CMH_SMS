@@ -42,7 +42,7 @@ def test_separate_body_parts_have_unique_serials_and_independent_verification():
         assert response.status_code == 200, response.text[:200]
 
 
-def test_verification_requires_permission():
+def test_verification_available_without_role_permissions():
     entry = client.post('/api/v1/tokens', json=token_payload()).json()
     with SessionLocal() as db:
         db.add(RoleDefinition(name='viewer', display_name='Viewer', access_profile='auditor', permissions=['queue.view']))
@@ -51,10 +51,10 @@ def test_verification_requires_permission():
     client.cookies.clear()
     client.post('/api/v1/auth/login', json={'username': 'viewer', 'password': 'ViewerPass123!'}).raise_for_status()
     response = client.patch(f"/api/v1/tokens/{entry['id']}/report-verification", json={})
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
-def test_role_permission_is_configurable_and_verification_is_not_room_restricted():
+def test_verification_is_independent_of_role_permission_and_room():
     from app.auth import LEGACY_ROLE_PERMISSIONS
     entry = client.post('/api/v1/tokens', json=token_payload()).json()
     # Custom roles can receive or lose the new permission through Settings APIs.
@@ -76,7 +76,7 @@ def test_role_permission_is_configurable_and_verification_is_not_room_restricted
     other = client.post('/api/v1/tokens', json={**token_payload(), 'doctor_id': None}).json()
     client.cookies.clear()
     client.post('/api/v1/auth/login', json={'username': 'clerk', 'password': 'ClerkPass123!'}).raise_for_status()
-    assert client.patch(f"/api/v1/tokens/{other['id']}/report-verification", json={}).status_code == 403
+    assert client.patch(f"/api/v1/tokens/{other['id']}/report-verification", json={}).status_code == 200
     client.cookies.clear()
     client.post('/api/v1/auth/login', json={'username': 'rad', 'password': 'RadioPass123!'}).raise_for_status()
     assert client.patch(f"/api/v1/tokens/{other['id']}/report-verification", json={}).status_code == 200

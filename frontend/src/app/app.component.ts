@@ -112,7 +112,7 @@ export class AppComponent implements OnDestroy {
     return this.lookup(category).map(item => ({value: item.label, label: item.label}));
   }
   canVerifyReport(token: QueueToken): boolean {
-    return (this.hasPermission('reports.verify') || this.hasPermission('pages.reception')) && !token.report_verified;
+    return !!this.currentUser && !token.report_verified;
   }
   openRowActions(id: string, event: MouseEvent): void {
     const menu = document.getElementById(id);
@@ -546,10 +546,8 @@ export class AppComponent implements OnDestroy {
       error: error => { this.suppliesSaving = false; this.message = this.apiErrorMessage(error, 'Could not save film and contrast.'); }
     });
   }
-  canEditEntry(token: QueueToken): boolean {
-    return this.hasPermission('queue.serial.create')
-      && ((this.currentUser?.access_profile || this.currentUser?.role) !== 'radiographer'
-        || !token.doctor_id || token.doctor_id === this.currentUser?.doctor_id);
+  canEditEntry(_token: QueueToken): boolean {
+    return !!this.currentUser;
   }
   editWaitingPatient(token: QueueToken): void {
     this.patientDetail = null; this.savedEntry = null;

@@ -179,7 +179,7 @@ def test_classification_metadata_uses_classify_permission_without_settings_permi
     client.cookies.clear()
     client.post('/api/v1/auth/login', json={'username': 'classifier', 'password': 'TestClassify123!'}).raise_for_status()
     assert client.get('/api/v1/mri-summary-mapping').status_code == 403
-    assert client.get('/api/v1/lookups').status_code == 403
+    assert client.get('/api/v1/lookups').status_code == 200
     options = client.get('/api/v1/classification-options')
     assert options.status_code == 200, options.text
     assert len(options.json()['columns']) == 12

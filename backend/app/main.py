@@ -59,7 +59,6 @@ from .auth import (
     new_session,
     require_permission,
     require_reception_report,
-    require_report_verification,
     revoke_session,
     user_for_session,
     verify_password,
@@ -783,7 +782,7 @@ def waiting_rooms(user: User = Depends(require_permission("directory.view")), db
 def lookups(
     category: str | None = None,
     include_inactive: bool = False,
-    user: User = Depends(require_permission("master_data.view")),
+    user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     stmt = select(LookupOption)
@@ -1002,7 +1001,7 @@ def reception_patient_search(q: str = Query(min_length=1, max_length=160),
 
 @app.get("/api/v1/registration/service-number-suggestions")
 def service_number_suggestions(q: str = Query(min_length=2, max_length=40), offset: int = Query(default=0, ge=0),
-                               _user: User = Depends(require_permission("queue.serial.create")), db: Session = Depends(get_db)):
+                               _user: User = Depends(current_user), db: Session = Depends(get_db)):
     query = q.strip()
     if len(query) < 2:
         return {"items": [], "has_more": False}
@@ -1020,7 +1019,7 @@ def service_number_suggestions(q: str = Query(min_length=2, max_length=40), offs
 
 @app.patch("/api/v1/tokens/{token_id}/report-verification", response_model=TokenRead)
 def verify_report(token_id: str,
-                  user: User = Depends(require_report_verification), db: Session = Depends(get_db)):
+                  user: User = Depends(current_user), db: Session = Depends(get_db)):
     token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
     if not token:
         raise HTTPException(404, "Entry not found")
@@ -1055,12 +1054,10 @@ def update_token_supplies(token_id: str, payload: TokenSuppliesUpdate,
 
 
 @app.patch("/api/v1/tokens/{token_id}", response_model=TokenRead)
-def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depends(require_permission("queue.serial.create")), db: Session = Depends(get_db)):
+def edit_waiting_patient(token_id: str, payload: TokenCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
     token = db.scalar(select(QueueToken).where(QueueToken.id == token_id).with_for_update())
     if not token:
         raise HTTPException(404, "Patient not found")
-    if user_access_profile(user, db) == "radiographer" and token.doctor_id and token.doctor_id != user.doctor_id:
-        raise HTTPException(403, "Patient is assigned to another room")
     from .registration import validate_registration
     payload = validate_registration(db, payload, existing=token)
     service = QueueService(db)
@@ -1238,7 +1235,7 @@ async def check_in_appointment(
 @app.post("/api/v1/bengali-name-suggestion")
 def bengali_name_suggestion(
     payload: BengaliNameSuggestionRequest,
-    user: User = Depends(require_permission("queue.serial.create")),
+    user: User = Depends(current_user),
 ):
     from .bangla_names import suggest_bengali_name
     return {"patient_name_bn": suggest_bengali_name(payload.patient_name), "needs_review": True}
